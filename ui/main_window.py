@@ -5,6 +5,7 @@ main_window.py - 主視窗
 """
 
 import logging
+import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QStackedWidget, QLabel, QFrame, QApplication
