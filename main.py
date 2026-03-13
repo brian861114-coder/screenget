@@ -10,6 +10,13 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QIcon
+
+# 在 Windows 上設定 AppUserModelID 以確保工作列顯示正確圖示
+if sys.platform == 'win32':
+    import ctypes
+    myappid = 'mycompany.myproduct.subproduct.version' # 任意唯一字串
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 from core.database import UsageDatabase
 from core.tracker import UsageTracker
@@ -40,6 +47,11 @@ class ScreenGetApp:
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)  # 關閉視窗不退出
+
+        # 設定全域圖示
+        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icon.png')
+        if os.path.exists(icon_path):
+            self.app.setWindowIcon(QIcon(icon_path))
 
         # 初始化資料庫
         self.db = UsageDatabase()

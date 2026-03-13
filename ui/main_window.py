@@ -103,6 +103,11 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setStyleSheet(LIGHT_STYLESHEET)
 
+        # 設定視窗圖示
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'resources', 'icon.png')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self._init_ui()
         self._setup_timer()
 
