@@ -2,9 +2,18 @@
 
 所有本專案的重大變更將記錄在此檔案中。
 
-## [2026-03-13]
+## [2026-03-13] - Packaging & Distribution
 
 ### ✨ 新增功能 (Added)
+- **執行檔封裝 (Executable)**：
+    - 將主程式打包成 `ScreenGet.exe`，支援在無 Python 環境下獨立執行。
+    - 將瀏覽器橋樑打包成 `ScreenGetHost.exe`，提升瀏覽器統計的穩定性。
+- **維護與部署工具**：
+    - 新增 `install_host.ps1` 自動註冊指令碼，簡化瀏覽器 Native Messaging 的設定過程。
+    - 提供全新的「使用說明.md」文檔，優化使用者初次安裝體驗。
+- **資源路徑自動轉換**：在 `main.py` 引入 `resource_path` 機制，確保打包後的圖示與外部資源路徑正確無誤。
+
+### 🎨 介面優化 (UI/UX)
 - **核心監控引擎**：實作基於 Windows API 的前景視窗追蹤與閒置偵測（20 分鐘超時）。
 - **資料庫架構**：建立 SQLite 基於 Session 的儲存機制，記錄應用程式與網頁的使用起止時間。
 - **瀏覽器追蹤**：開發 Chrome 擴充套件，透過 Native Messaging 與桌面端連動，支援追蹤具體 URL。

@@ -11,5 +11,4 @@ ENV/
 .idea/
 .vscode/
 build/
-dist/
 *.spec

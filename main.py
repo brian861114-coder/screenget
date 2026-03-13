@@ -12,6 +12,15 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
 
+def resource_path(relative_path):
+    """取得資源的絕對路徑，相容於 PyInstaller 封裝後的路徑"""
+    try:
+        # PyInstaller 建立一個臨時資料夾並將路徑存放在 _MEIPASS 中
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 # 在 Windows 上設定 AppUserModelID 以確保工作列顯示正確圖示
 if sys.platform == 'win32':
     import ctypes
@@ -49,7 +58,7 @@ class ScreenGetApp:
         self.app.setQuitOnLastWindowClosed(False)  # 關閉視窗不退出
 
         # 設定全域圖示
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icon.png')
+        icon_path = resource_path(os.path.join('resources', 'icon.png'))
         if os.path.exists(icon_path):
             self.app.setWindowIcon(QIcon(icon_path))
 
@@ -82,7 +91,7 @@ class ScreenGetApp:
     def _init_ui(self):
         """初始化 UI 元件"""
         # 取得圖示路徑
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icon.png')
+        icon_path = resource_path(os.path.join('resources', 'icon.png'))
         if not os.path.exists(icon_path):
             icon_path = None
 
