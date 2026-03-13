@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "ScreenGet - 網頁使用追蹤",
+  "version": "1.0.0",
+  "description": "追蹤瀏覽器中各網頁的使用時間，與 ScreenGet 桌面應用同步。",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ScreenGet"
+  }
+}
