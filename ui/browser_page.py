@@ -19,6 +19,7 @@ class BrowserPage(QWidget):
     """瀏覽器分析介面 - 專門顯示各網站的使用狀況"""
 
     website_clicked = pyqtSignal(str)  # 點擊某網站，跳轉到分析頁面
+    detail_requested = pyqtSignal(str) # 'app' or 'browser'
 
     def __init__(self, analyzer: UsageAnalyzer, parent=None):
         super().__init__(parent)
@@ -59,9 +60,11 @@ class BrowserPage(QWidget):
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
 
-        self.card_total = StatCard("瀏覽總時長")
+        self.card_total = StatCard("瀏覽總時長 (點擊查看全部)", clickable=True)
         self.card_sites = StatCard("瀏覽網站數")
         self.card_top = StatCard("最常造訪網站")
+
+        self.card_total.clicked.connect(lambda: self.detail_requested.emit('browser'))
 
         cards_layout.addWidget(self.card_total)
         cards_layout.addWidget(self.card_sites)
@@ -147,8 +150,8 @@ class BrowserPage(QWidget):
             else:
                 self.card_top.set_value("—")
 
-            # 更新排行圖
-            self.ranking_chart.update_chart(rankings)
+            # 更新排行圖 (限制前五個)
+            self.ranking_chart.update_chart(rankings, max_items=5)
 
             # 更新趨勢圖 (僅顯示瀏覽器類型)
             trend = self.analyzer.get_daily_trend(days, app_type='browser')

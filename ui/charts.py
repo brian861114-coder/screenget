@@ -50,7 +50,7 @@ def get_color_for_app(app_name: str, app_list: List[str] = None) -> str:
 
 
 class TimelineChart(FigureCanvas):
-    """時間段長條圖 - 顯示一天中各時段的使用情況（Gantt-style）"""
+    """使用時間段堆疊直條圖 - 顯示一天中各小時的使用情況"""
 
     def __init__(self, parent=None, width=10, height=3):
         self.fig = Figure(figsize=(width, height), facecolor=DARK_BG)
@@ -68,7 +68,7 @@ class TimelineChart(FigureCanvas):
         self.ax.spines['left'].set_color(DARK_GRID)
 
     def update_chart(self, time_blocks: List[Dict[str, Any]], target_date=None):
-        """更新時間段圖表"""
+        """更新時間段堆疊直條圖"""
         self.ax.clear()
         self._setup_style()
 
@@ -78,37 +78,52 @@ class TimelineChart(FigureCanvas):
             self.draw()
             return
 
-        # 取得所有不重複的 app
-        apps = list(dict.fromkeys(b['app_name'] for b in time_blocks))
+        # 計算各 app 總使用量，依使用量多→少排序
+        app_totals: Dict[str, float] = {}
+        for block in time_blocks:
+            name = block['app_name']
+            dur = (block['end'] - block['start']).total_seconds()
+            app_totals[name] = app_totals.get(name, 0) + dur
+        apps = sorted(app_totals.keys(), key=lambda a: app_totals[a], reverse=True)
 
+        # 累計每小時、每個 app 的使用分鐘數
+        hourly_per_app: Dict[str, list] = {app: [0.0] * 24 for app in apps}
         for block in time_blocks:
             app_name = block['app_name']
-            y_pos = apps.index(app_name)
-            start = block['start']
+            current = block['start']
             end = block['end']
-            width = mdates.date2num(end) - mdates.date2num(start)
+            while current < end:
+                hour = current.hour
+                next_hour = current.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                slice_end = min(next_hour, end)
+                hourly_per_app[app_name][hour] += (slice_end - current).total_seconds() / 60.0
+                current = slice_end
+
+        # 繪製堆疊直條圖
+        hours = list(range(24))
+        bottoms = [0.0] * 24
+        for app_name in apps:
+            values = hourly_per_app[app_name]
             color = get_color_for_app(app_name, apps)
+            self.ax.bar(hours, values, bottom=bottoms, color=color,
+                       alpha=0.85, edgecolor='none', width=0.85, label=app_name)
+            bottoms = [bottoms[i] + values[i] for i in range(24)]
 
-            self.ax.barh(y_pos, width, left=mdates.date2num(start),
-                        height=0.6, color=color, alpha=0.85,
-                        edgecolor='none', linewidth=0)
+        # X 軸
+        self.ax.set_xticks(hours)
+        self.ax.set_xticklabels([f'{h:02d}' for h in hours], fontsize=7, color=DARK_TEXT)
+        self.ax.set_xlabel('當日時間', color=DARK_TEXT, fontsize=10)
+        self.ax.set_ylabel('使用時間 (分鐘)', color=DARK_TEXT, fontsize=10)
+        self.ax.set_xlim(-0.5, 23.5)
+        self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
 
-        # 設定 Y 軸
-        self.ax.set_yticks(range(len(apps)))
-        self.ax.set_yticklabels(apps, fontsize=9, color=DARK_TEXT)
+        # 圖例放右側
+        if apps:
+            self.ax.legend(
+                loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0,
+                fontsize=8, frameon=False, labelcolor=DARK_TEXT
+            )
 
-        # 設定 X 軸（時間）
-        self.ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-        self.ax.xaxis.set_major_locator(HourLocator(interval=2))
-
-        if target_date:
-            start_of_day = datetime.combine(target_date, datetime.min.time())
-            end_of_day = start_of_day + timedelta(days=1)
-            self.ax.set_xlim(mdates.date2num(start_of_day),
-                           mdates.date2num(end_of_day))
-
-        self.ax.grid(axis='x', color=DARK_GRID, alpha=0.3, linestyle='--')
-        self.ax.set_xlabel('時間', color=DARK_TEXT, fontsize=10)
         self.fig.tight_layout(pad=1.5)
         self.draw()
 

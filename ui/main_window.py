@@ -17,6 +17,9 @@ from core.analyzer import UsageAnalyzer
 from ui.dashboard_page import DashboardPage
 from ui.analysis_page import AnalysisPage
 from ui.browser_page import BrowserPage
+from ui.detail_page import DetailListPage
+from ui.settings_page import SettingsPage
+from core.settings_manager import SettingsManager
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +96,10 @@ class NavButton(QPushButton):
 class MainWindow(QMainWindow):
     """主視窗"""
 
-    def __init__(self, analyzer: UsageAnalyzer, parent=None):
+    def __init__(self, analyzer: UsageAnalyzer, settings: SettingsManager, parent=None):
         super().__init__(parent)
         self.analyzer = analyzer
+        self.settings_manager = settings
         self._minimize_to_tray = True  # 關閉時最小化到系統匣
         self._force_quit = False
 
@@ -105,9 +109,17 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(LIGHT_STYLESHEET)
 
         # 設定視窗圖示
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'resources', 'icon.png')
+        # 取得專案根目錄 (ui/main_window.py -> ui -> root)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, 'resources', 'icon.png')
+        
         if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+            app_icon = QIcon(icon_path)
+            self.setWindowIcon(app_icon)
+            # 同時確保全域圖示也設定了
+            QApplication.setWindowIcon(app_icon)
+        else:
+            logger.warning(f"找不到圖示檔: {icon_path}")
 
         self._init_ui()
         self._setup_timer()
@@ -156,15 +168,18 @@ class MainWindow(QMainWindow):
         self.btn_dashboard = NavButton("使用總覽", "📊")
         self.btn_browser = NavButton("瀏覽器分析", "🌐")
         self.btn_analysis = NavButton("軟體分析", "🔍")
+        self.btn_settings = NavButton("設定", "⚙️")
 
         self.btn_dashboard.setChecked(True)
         self.btn_dashboard.clicked.connect(lambda: self._switch_page(0))
         self.btn_browser.clicked.connect(lambda: self._switch_page(1))
         self.btn_analysis.clicked.connect(lambda: self._switch_page(2))
+        self.btn_settings.clicked.connect(lambda: self._switch_page(3))
 
         nav_layout.addWidget(self.btn_dashboard)
         nav_layout.addWidget(self.btn_browser)
         nav_layout.addWidget(self.btn_analysis)
+        nav_layout.addWidget(self.btn_settings)
         nav_layout.addStretch()
 
         # 狀態資訊
@@ -186,14 +201,31 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage(self.analyzer)
         self.browser_page = BrowserPage(self.analyzer)
         self.analysis_page = AnalysisPage(self.analyzer)
+        self.settings_page = SettingsPage(self.settings_manager)
 
         # 連接 dashboard 的 app 點擊事件
         self.dashboard_page.app_clicked.connect(self._go_to_analysis)
         self.browser_page.website_clicked.connect(self._go_to_analysis)
+        self.settings_page.settings_changed.connect(self._on_settings_changed)
 
         self.stack.addWidget(self.dashboard_page)
         self.stack.addWidget(self.browser_page)
         self.stack.addWidget(self.analysis_page)
+        self.stack.addWidget(self.settings_page) # index 3
+        
+        # ─── 詳細清單頁面 (不直接顯示在導航列) ───
+        self.app_detail_page = DetailListPage(self.analyzer, "所有程式使用排行", app_type='app')
+        self.browser_detail_page = DetailListPage(self.analyzer, "網站造訪總排行", app_type='browser')
+        
+        self.stack.addWidget(self.app_detail_page) # index 4
+        self.stack.addWidget(self.browser_detail_page) # index 5
+        
+        # 連接詳細頁面信號
+        self.dashboard_page.detail_requested.connect(lambda: self._show_detail('app'))
+        self.browser_page.detail_requested.connect(lambda: self._show_detail('browser'))
+        
+        self.app_detail_page.back_clicked.connect(lambda: self._switch_page(0))
+        self.browser_detail_page.back_clicked.connect(lambda: self._switch_page(1))
 
         main_layout.addWidget(self.stack)
 
@@ -219,11 +251,31 @@ class MainWindow(QMainWindow):
         self.btn_browser._update_style(index == 1)
         self.btn_analysis.setChecked(index == 2)
         self.btn_analysis._update_style(index == 2)
+        self.btn_settings.setChecked(index == 3)
+        self.btn_settings._update_style(index == 3)
 
         # 切換時重新載入資料
         page = self.stack.widget(index)
         if hasattr(page, 'refresh_data'):
             page.refresh_data()
+
+    def _show_detail(self, category: str):
+        """顯示詳細清單頁面"""
+        if category == 'app':
+            self.app_detail_page.set_period(self.dashboard_page.current_period)
+            self.stack.setCurrentIndex(4)
+        else:
+            self.browser_detail_page.set_period(self.browser_page.current_period)
+            self.stack.setCurrentIndex(5)
+
+    def _on_settings_changed(self):
+        """當設定（如白名單）變更時，重新整理目前頁面"""
+        current = self.stack.currentWidget()
+        if hasattr(current, 'refresh_data'):
+            current.refresh_data()
+        
+        # 切換時取消導航列的所有選取狀態 (或維持原本的)
+        # 這裡我們維持原本的導航選中，只是內容區換了
 
     def _go_to_analysis(self, app_name: str):
         """跳轉到分析頁面查看特定軟體"""

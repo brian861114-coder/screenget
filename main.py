@@ -24,10 +24,12 @@ def resource_path(relative_path):
 # 在 Windows 上設定 AppUserModelID 以確保工作列顯示正確圖示
 if sys.platform == 'win32':
     import ctypes
-    myappid = 'mycompany.myproduct.subproduct.version' # 任意唯一字串
+    # 使用唯一的應用程式 ID，這有助於 Windows 將視窗與正確的圖示建立關聯
+    myappid = 'brian861114.screenget.app.v1' 
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 from core.database import UsageDatabase
+from core.settings_manager import SettingsManager
 from core.tracker import UsageTracker
 from core.idle_detector import IdleDetector
 from core.analyzer import UsageAnalyzer
@@ -64,10 +66,13 @@ class ScreenGetApp:
 
         # 初始化資料庫
         self.db = UsageDatabase()
-        self.db.close_all_open_sessions()  # 清理上次異常退出的 sessions
+        self.db.close_all_open_sessions()
+
+        # 初始化設定管理器
+        self.settings_manager = SettingsManager()
 
         # 初始化分析器
-        self.analyzer = UsageAnalyzer(self.db)
+        self.analyzer = UsageAnalyzer(self.db, self.settings_manager)
 
         # 初始化追蹤器
         self.tracker = UsageTracker(self.db)
@@ -96,7 +101,7 @@ class ScreenGetApp:
             icon_path = None
 
         # 主視窗
-        self.main_window = MainWindow(self.analyzer)
+        self.main_window = MainWindow(self.analyzer, self.settings_manager)
 
         # 系統匣
         self.system_tray = SystemTray(icon_path)

@@ -8,13 +8,14 @@ from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 
 from core.database import UsageDatabase
-
+from core.settings_manager import SettingsManager
 
 class UsageAnalyzer:
     """使用量分析器"""
 
-    def __init__(self, db: UsageDatabase):
+    def __init__(self, db: UsageDatabase, settings: SettingsManager = None):
         self.db = db
+        self.settings = settings
 
     # ─── 時間範圍工具 ───
 
@@ -50,7 +51,8 @@ class UsageAnalyzer:
                         app_name: str = None) -> float:
         """取得指定時間範圍的總使用秒數"""
         sessions = self.db.get_sessions_in_range(start, end, app_name)
-        return sum(s.get('duration_seconds', 0) or 0 for s in sessions)
+        return sum(s.get('duration_seconds', 0) or 0 for s in sessions 
+                   if not (self.settings and self.settings.is_whitelisted(s['app_name'])))
 
     def get_daily_total(self, app_name: str = None) -> float:
         """當日總使用時長（秒）"""
@@ -77,9 +79,14 @@ class UsageAnalyzer:
         app_types: Dict[str, str] = {}
 
         for s in sessions:
+            name = s['app_name']
+            
+            # 白名單過濾
+            if self.settings and self.settings.is_whitelisted(name):
+                continue
+                
             if app_type and s.get('app_type') != app_type:
                 continue
-            name = s['app_name']
             duration = s.get('duration_seconds', 0) or 0
             app_usage[name] += duration
             if name not in app_types:
@@ -132,8 +139,13 @@ class UsageAnalyzer:
                 s_start = datetime.fromisoformat(s['start_time'])
                 s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
                 if s_end:
+                    app_name = s['app_name']
+                    # 白名單過濾
+                    if self.settings and self.settings.is_whitelisted(app_name):
+                        continue
+                        
                     blocks.append({
-                        'app_name': s['app_name'],
+                        'app_name': app_name,
                         'app_type': s.get('app_type', 'app'),
                         'start': s_start,
                         'end': s_end,
@@ -159,6 +171,10 @@ class UsageAnalyzer:
                 s_start = datetime.fromisoformat(s['start_time'])
                 s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
                 if not s_end:
+                    continue
+                
+                # 白名單過濾
+                if self.settings and self.settings.is_whitelisted(s['app_name']):
                     continue
 
                 # 將 session 分配到各小時
@@ -197,9 +213,16 @@ class UsageAnalyzer:
             if app_type:
                 sessions = self.db.get_sessions_in_range(start, end)
                 total = sum(s.get('duration_seconds', 0) or 0 
-                            for s in sessions if s.get('app_type') == app_type)
+                            for s in sessions if s.get('app_type') == app_type 
+                            and not (self.settings and self.settings.is_whitelisted(s['app_name'])))
             else:
-                total = self.get_total_usage(start, end, app_name)
+                if app_name: # Specific app
+                    total = self.get_total_usage(start, end, app_name)
+                else: # Global total, apply whitelist
+                    sessions = self.db.get_sessions_in_range(start, end)
+                    total = sum(s.get('duration_seconds', 0) or 0 
+                                for s in sessions 
+                                if not (self.settings and self.settings.is_whitelisted(s['app_name'])))
                 
             trend.append({
                 'date': day,
