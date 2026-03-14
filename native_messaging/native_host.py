@@ -52,22 +52,27 @@ def main():
     current_session_id = None
 
     logger.info("Native messaging host started")
+    logger.info(f"Python executable: {sys.executable}")
+    logger.info(f"Current directory: {os.getcwd()}")
+    logger.info(f"Database path: {db.db_path}")
 
     while True:
         try:
             message = read_message()
             if message is None:
+                logger.info("Received empty message (EOF), stopping")
                 break
 
             msg_type = message.get('type', '')
             url = message.get('url', '')
             title = message.get('title', '')
 
-            logger.info(f"Received: {msg_type} - {url[:80]}")
+            logger.info(f"Received message: {json.dumps(message)}")
 
             if msg_type == 'page_start':
                 # 結束前一個 session
                 if current_session_id is not None:
+                    logger.info(f"Ending session {current_session_id} for new page")
                     db.end_session(current_session_id)
 
                 # 開始新的 session
@@ -86,16 +91,19 @@ def main():
                     app_type='browser',
                     url=url
                 )
+                logger.info(f"Started session {current_session_id} for {domain}")
 
                 send_message({'status': 'ok', 'session_id': current_session_id})
 
             elif msg_type == 'page_end':
                 if current_session_id is not None:
+                    logger.info(f"Ending session {current_session_id} (page_end)")
                     db.end_session(current_session_id)
                     current_session_id = None
                 send_message({'status': 'ok'})
 
             else:
+                logger.warning(f"Unknown message type: {msg_type}")
                 send_message({'status': 'unknown_type'})
 
         except Exception as e:
@@ -107,6 +115,7 @@ def main():
 
     # 清理
     if current_session_id is not None:
+        logger.info(f"Cleaning up: ending session {current_session_id}")
         db.end_session(current_session_id)
 
     logger.info("Native messaging host stopped")

@@ -15,6 +15,14 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import numpy as np
+import platform
+
+# 設定中文字體以解決亂碼問題
+if platform.system() == 'Windows':
+    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial']
+else:
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+plt.rcParams['axes.unicode_minus'] = False
 
 # 淺色主題配色 (基於 #D7F5F2)
 DARK_BG = '#D7F5F2'
@@ -194,8 +202,8 @@ class HourlyChart(FigureCanvas):
         self.ax.set_xticks(hours)
         self.ax.set_xticklabels([f'{h:02d}' for h in hours],
                                 fontsize=7, color=DARK_TEXT)
-        self.ax.set_xlabel('小時', color=DARK_TEXT, fontsize=10)
-        self.ax.set_ylabel('分鐘', color=DARK_TEXT, fontsize=10)
+        self.ax.set_xlabel('當日時間', color=DARK_TEXT, fontsize=10)
+        self.ax.set_ylabel('使用比例', color=DARK_TEXT, fontsize=10)
         self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
         self.fig.tight_layout(pad=1.5)
         self.draw()

@@ -1,0 +1,2 @@
+@echo off
+py -u "C:\Users\USER\DOWNLO~1\VIBE_C~1\SCREEN~2\NATIVE~1\NATIVE~1.PY" %*

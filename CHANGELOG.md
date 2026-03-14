@@ -2,6 +2,21 @@
 
 所有本專案的重大變更將記錄在此檔案中。
 
+## [2026-03-14] - Chart Fixes & Connectivity Improvement
+
+### 🎨 介面優化 (UI/UX)
+- **修正圖表亂碼 (Chart Mojibake Fixed)**：
+    - 在 `ui/charts.py` 中引入中文字體設定，優先使用「微軟正黑體 (Microsoft JhengHei)」，解決 Windows 系統下圖表標籤顯示為方塊的問題。
+    - 更新「24 小時使用分布」圖表標籤：橫軸由「小時」改為「**當日時間**」，縱軸由「分鐘」改為「**使用比例**」。
+
+### 🔧 修復與改進 (Fixed & Improved)
+- **解決 Native Messaging 路徑問題**：
+    - 針對專案目錄包含中文字元導致瀏覽器橋樑啟動失敗的問題，引入 **Windows 短路徑 (8.3 Path)** 技術。
+    - 重構註冊流程：新增 `fix_host_shortpath.py` 工具，確保 Chrome 能夠透過純英文路徑格式穩定啟動 `native_host.py`。
+    - 修正 `com.screenget.host.json` 的編碼問題，確保 UTF-8 JSON 格式被 Chrome 正確解析。
+- **診斷工具升級**：
+    - 在 `native_host.py` 中新增詳細的偵錯日誌，追蹤 Python 執行環境、資料庫路徑與訊息交換過程。
+
 ## [2026-03-13] - Packaging & Distribution
 
 ### ✨ 新增功能 (Added)
