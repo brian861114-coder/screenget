@@ -36,7 +36,7 @@ class SettingsPage(QWidget):
         lang_layout = QVBoxLayout(lang_group)
         
         lang_header = QLabel("🌐 語言設定 / Language")
-        lang_header.setStyleSheet("font-weight: bold; border: none;")
+        lang_header.setStyleSheet("font-weight: bold; border: none; font-size: 18px;")
         lang_layout.addWidget(lang_header)
         
         self.lang_combo = QComboBox()
@@ -57,7 +57,7 @@ class SettingsPage(QWidget):
         self.auto_check = QCheckBox("開機自動執行 ScreenGet")
         self.auto_check.setChecked(self.settings_manager.settings.get('autostart', False))
         self.auto_check.stateChanged.connect(self._on_autostart_changed)
-        self.auto_check.setStyleSheet("font-weight: bold; border: none;")
+        self.auto_check.setStyleSheet("font-weight: bold; border: none; font-size: 18px;")
         auto_layout.addWidget(self.auto_check)
         
         layout.addWidget(auto_group)
@@ -68,7 +68,7 @@ class SettingsPage(QWidget):
         white_layout = QVBoxLayout(white_group)
         
         white_header = QLabel("🛡️ 數據排除白名單 (應用程式名稱或網域)")
-        white_header.setStyleSheet("font-weight: bold; border: none;")
+        white_header.setStyleSheet("font-weight: bold; border: none; font-size: 18px;")
         white_layout.addWidget(white_header)
         
         white_desc = QLabel("加入列表的程式或網站將不會出現在統計圖表中。")

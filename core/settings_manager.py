@@ -62,7 +62,14 @@ class SettingsManager:
             exe_path = sys.executable
         else:
             # 開發環境下指向 main.py
-            exe_path = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}"'
+            executable = sys.executable
+            # 在 Windows 上嘗試使用 pythonw.exe 以隱藏主控台
+            if sys.platform == 'win32' and executable.lower().endswith('python.exe'):
+                pw = executable.lower().replace('python.exe', 'pythonw.exe')
+                if os.path.exists(pw):
+                    executable = pw
+            
+            exe_path = f'"{executable}" "{os.path.abspath(sys.argv[0])}"'
 
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)

@@ -108,19 +108,6 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setStyleSheet(LIGHT_STYLESHEET)
 
-        # 設定視窗圖示
-        # 取得專案根目錄 (ui/main_window.py -> ui -> root)
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        icon_path = os.path.join(base_dir, 'resources', 'icon.png')
-        
-        if os.path.exists(icon_path):
-            app_icon = QIcon(icon_path)
-            self.setWindowIcon(app_icon)
-            # 同時確保全域圖示也設定了
-            QApplication.setWindowIcon(app_icon)
-        else:
-            logger.warning(f"找不到圖示檔: {icon_path}")
-
         self._init_ui()
         self._setup_timer()
 

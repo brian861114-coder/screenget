@@ -21,12 +21,18 @@ def resource_path(relative_path):
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
-# 在 Windows 上設定 AppUserModelID 以確保工作列顯示正確圖示
-if sys.platform == 'win32':
-    import ctypes
-    # 使用唯一的應用程式 ID，這有助於 Windows 將視窗與正確的圖示建立關聯
-    myappid = 'brian861114.screenget.app.v1' 
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+# 在 Windows 上設定 AppUserModelID — 必須在 QApplication 建立「之前」呼叫才能生效
+def set_app_user_model_id():
+    if sys.platform == 'win32':
+        import ctypes
+        try:
+            myappid = u'brian861114.screenget.app.v1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print(f"Failed to set AppUserModelID: {e}")
+
+# 盡早呼叫，確保在 QApplication 建立前就設定好
+set_app_user_model_id()
 
 from core.database import UsageDatabase
 from core.settings_manager import SettingsManager
@@ -59,10 +65,19 @@ class ScreenGetApp:
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)  # 關閉視窗不退出
 
-        # 設定全域圖示
-        icon_path = resource_path(os.path.join('resources', 'icon.png'))
-        if os.path.exists(icon_path):
-            self.app.setWindowIcon(QIcon(icon_path))
+        # 設定全域圖示：優先使用 .ico（Windows 工作列必須用 .ico 才能正確顯示）
+        ico_path = resource_path(os.path.join('resources', 'icon.ico'))
+        png_path = resource_path(os.path.join('resources', 'icon.png'))
+        self.icon_path = ico_path if os.path.exists(ico_path) else png_path
+
+        if os.path.exists(self.icon_path):
+            app_icon = QIcon(self.icon_path)
+            self.app.setWindowIcon(app_icon)
+            self.main_icon = app_icon
+            logger.info(f"Icon loaded: {self.icon_path}")
+        else:
+            logger.warning(f"Icon not found: {self.icon_path}")
+            self.main_icon = None
 
         # 初始化資料庫
         self.db = UsageDatabase()
@@ -95,16 +110,13 @@ class ScreenGetApp:
 
     def _init_ui(self):
         """初始化 UI 元件"""
-        # 取得圖示路徑
-        icon_path = resource_path(os.path.join('resources', 'icon.png'))
-        if not os.path.exists(icon_path):
-            icon_path = None
-
         # 主視窗
         self.main_window = MainWindow(self.analyzer, self.settings_manager)
+        if self.main_icon:
+            self.main_window.setWindowIcon(self.main_icon)
 
         # 系統匣
-        self.system_tray = SystemTray(icon_path)
+        self.system_tray = SystemTray(self.icon_path)
         self.system_tray.show_window_signal.connect(self._show_dashboard)
         self.system_tray.quit_signal.connect(self._quit)
         self.system_tray.toggle_tracking_signal.connect(self._toggle_tracking)
