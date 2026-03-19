@@ -10,7 +10,7 @@ import threading
 import time
 import logging
 from typing import Callable, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class IdleDetector:
                     # 進入閒置狀態
                     self._is_idle = True
                     # 閒置開始時間 = 現在 - 閒置秒數（即最後操作的時間點）
-                    self._idle_start_time = datetime.now()
+                    self._idle_start_time = datetime.now() - timedelta(seconds=idle_seconds)
                     logger.info(f"User idle for {idle_seconds:.0f}s, pausing tracking")
                     if self.on_idle:
                         try:

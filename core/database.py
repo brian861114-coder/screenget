@@ -31,7 +31,7 @@ class UsageDatabase:
                 conn.execute("PRAGMA foreign_keys=ON")
                 self._persistent_conn = conn
             return self._persistent_conn
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -130,7 +130,8 @@ class UsageDatabase:
             self._release_conn(conn)
 
     def get_sessions_in_range(self, start: datetime, end: datetime,
-                              app_name: Optional[str] = None) -> List[Dict[str, Any]]:
+                              app_name: Optional[str] = None,
+                              app_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """查詢指定時間範圍內的 sessions"""
         conn = self._get_conn()
         try:
@@ -138,12 +139,15 @@ class UsageDatabase:
                 SELECT * FROM usage_sessions
                 WHERE start_time >= ? AND start_time < ?
                   AND (end_time IS NOT NULL)
-                  AND duration_seconds > 0
+                  AND duration_seconds >= 0
             """
             params = [start.isoformat(), end.isoformat()]
             if app_name:
                 query += " AND app_name = ?"
                 params.append(app_name)
+            if app_type:
+                query += " AND app_type = ?"
+                params.append(app_type)
             query += " ORDER BY start_time ASC"
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
@@ -170,7 +174,7 @@ class UsageDatabase:
             rows = conn.execute(
                 """SELECT DISTINCT app_name FROM usage_sessions
                    WHERE start_time >= ? AND start_time < ?
-                     AND end_time IS NOT NULL AND duration_seconds > 0
+                     AND end_time IS NOT NULL AND duration_seconds >= 0
                    ORDER BY app_name""",
                 (start.isoformat(), end.isoformat())
             ).fetchall()
@@ -221,7 +225,7 @@ class UsageDatabase:
                    WHERE start_time >= ? AND start_time < ?
                      AND app_type = 'browser'
                      AND end_time IS NOT NULL
-                     AND duration_seconds > 0
+                     AND duration_seconds >= 0
                    ORDER BY start_time ASC""",
                 (start.isoformat(), end.isoformat())
             ).fetchall()
@@ -259,3 +263,9 @@ class UsageDatabase:
             return sorted(dates)
         finally:
             self._release_conn(conn)
+
+    def close(self):
+        """關閉資料庫連線"""
+        if self._persistent_conn:
+            self._persistent_conn.close()
+            self._persistent_conn = None

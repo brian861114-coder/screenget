@@ -117,7 +117,8 @@ def main():
     if current_session_id is not None:
         logger.info(f"Cleaning up: ending session {current_session_id}")
         db.end_session(current_session_id)
-
+    
+    db.close()
     logger.info("Native messaging host stopped")
 
 

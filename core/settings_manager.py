@@ -72,15 +72,14 @@ class SettingsManager:
             exe_path = f'"{executable}" "{os.path.abspath(sys.argv[0])}"'
 
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-            if self.settings.get('autostart'):
-                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
-            else:
-                try:
-                    winreg.DeleteValue(key, app_name)
-                except FileNotFoundError:
-                    pass
-            winreg.CloseKey(key)
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+                if self.settings.get('autostart'):
+                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+                else:
+                    try:
+                        winreg.DeleteValue(key, app_name)
+                    except FileNotFoundError:
+                        pass
         except Exception as e:
             logger.error(f"設定開機啟動失敗: {e}")
 

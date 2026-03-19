@@ -96,17 +96,27 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   }
 });
 
-// 監聯分頁更新事件（URL 變更）
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+// Debouncer 實作
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
+// 監聽分頁更新事件 (使用 debounce 以節流)
+const debouncedUpdate = debounce((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.title) {
-    // 確認是否為當前活動的分頁
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0] && tabs[0].id === tabId) {
         updateCurrentTab(tab);
       }
     });
   }
-});
+}, 300);
+
+chrome.tabs.onUpdated.addListener(debouncedUpdate);
 
 // 監聽視窗焦點變更
 chrome.windows.onFocusChanged.addListener(async (windowId) => {

@@ -48,9 +48,9 @@ class UsageAnalyzer:
     # ─── 總使用時長 ───
 
     def get_total_usage(self, start: datetime, end: datetime,
-                        app_name: str = None) -> float:
+                        app_name: str = None, app_type: str = None) -> float:
         """取得指定時間範圍的總使用秒數"""
-        sessions = self.db.get_sessions_in_range(start, end, app_name)
+        sessions = self.db.get_sessions_in_range(start, end, app_name, app_type)
         total = 0.0
         for s in sessions:
             if self.settings and self.settings.is_whitelisted(s['app_name']):
@@ -87,7 +87,7 @@ class UsageAnalyzer:
     def get_app_rankings(self, start: datetime, end: datetime, 
                          app_type: str = None) -> List[Dict[str, Any]]:
         """取得各程式的使用時長排行，可篩選類型 (app / browser / game)"""
-        sessions = self.db.get_sessions_in_range(start, end)
+        sessions = self.db.get_sessions_in_range(start, end, app_type=app_type)
         app_usage: Dict[str, float] = defaultdict(float)
         app_types: Dict[str, str] = {}
 
@@ -96,9 +96,6 @@ class UsageAnalyzer:
             
             # 白名單過濾
             if self.settings and self.settings.is_whitelisted(name):
-                continue
-                
-            if app_type and s.get('app_type') != app_type:
                 continue
                 
             try:
@@ -314,10 +311,7 @@ class UsageAnalyzer:
             
             # 這裡需要一個過濾 app_type 的 get_total_usage
             if app_type:
-                sessions = self.db.get_sessions_in_range(start, end)
-                total = sum(s.get('duration_seconds', 0) or 0 
-                            for s in sessions if s.get('app_type') == app_type 
-                            and not (self.settings and self.settings.is_whitelisted(s['app_name'])))
+                total = self.get_total_usage(start, end, app_type=app_type)
             else:
                 if app_name: # Specific app
                     total = self.get_total_usage(start, end, app_name)

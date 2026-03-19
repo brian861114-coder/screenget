@@ -172,4 +172,4 @@ class ProcessFilter:
         if display_name.lower().endswith('.exe'):
             display_name = display_name[:-4]
 
-        return display_name
+        return display_name or process_name

@@ -59,6 +59,10 @@ class TimelineChart(FigureCanvas):
         self.ax = self.fig.add_subplot(111)
         self._setup_style()
 
+    def __del__(self):
+        """釋放 matplotlib 資源"""
+        plt.close(self.fig)
+
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
         self.ax.tick_params(colors=DARK_TEXT, labelsize=8)
@@ -185,6 +189,10 @@ class UsageBarChart(FigureCanvas):
         self.ax = self.fig.add_subplot(111)
         self._setup_style()
 
+    def __del__(self):
+        """釋放 matplotlib 資源"""
+        plt.close(self.fig)
+
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
         self.ax.tick_params(colors=DARK_TEXT, labelsize=9)
@@ -240,6 +248,10 @@ class HourlyChart(FigureCanvas):
         self.ax = self.fig.add_subplot(111)
         self._setup_style()
 
+    def __del__(self):
+        """釋放 matplotlib 資源"""
+        plt.close(self.fig)
+
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
         self.ax.tick_params(colors=DARK_TEXT, labelsize=8)
@@ -280,6 +292,10 @@ class TrendChart(FigureCanvas):
         self.setParent(parent)
         self.ax = self.fig.add_subplot(111)
         self._setup_style()
+
+    def __del__(self):
+        """釋放 matplotlib 資源"""
+        plt.close(self.fig)
 
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)

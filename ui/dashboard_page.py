@@ -16,6 +16,25 @@ from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 from core.analyzer import UsageAnalyzer
 from ui.charts import TimelineChart, UsageBarChart, HourlyChart
 
+import logging
+logger = logging.getLogger(__name__)
+
+# 常見樣式
+CARD_STYLE = """
+    #statCard {
+        background-color: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #B9FBC0;
+        padding: 16px;
+    }
+"""
+CARD_HOVER_STYLE = """
+    #statCard:hover {
+        background-color: #F8FFF9;
+        border: 1px solid #A2D2FF;
+    }
+"""
+
 class StatCard(QFrame):
     """統計卡片元件"""
     clicked = pyqtSignal()
@@ -27,27 +46,9 @@ class StatCard(QFrame):
         
         if self.clickable:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.setStyleSheet("""
-                #statCard {
-                    background-color: #FFFFFF;
-                    border-radius: 12px;
-                    border: 1px solid #B9FBC0;
-                    padding: 16px;
-                }
-                #statCard:hover {
-                    background-color: #F8FFF9;
-                    border: 1px solid #A2D2FF;
-                }
-            """)
+            self.setStyleSheet(CARD_STYLE + CARD_HOVER_STYLE)
         else:
-            self.setStyleSheet("""
-                #statCard {
-                    background-color: #FFFFFF;
-                    border-radius: 12px;
-                    border: 1px solid #B9FBC0;
-                    padding: 16px;
-                }
-            """)
+            self.setStyleSheet(CARD_STYLE)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -299,6 +300,9 @@ class DashboardPage(QWidget):
 
     def refresh_data(self):
         """重新載入並顯示資料"""
+        from PyQt6.QtWidgets import QApplication
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
         try:
             # 根據週期取得時間範圍
             if self.current_period == 'daily':
@@ -352,7 +356,7 @@ class DashboardPage(QWidget):
                 else:
                     # 特定程式
                     filtered_blocks = [b for b in blocks if b['app_name'] == selected_filter]
-                    self.timeline_chart.update_chart(filtered_blocks, target_date=date.today())
+                    self.timeline_chart.update_chart(filtered_blocks, target_date=target_date)
                 
                 # 恢復 24 小時圖表
                 self.hourly_chart.setVisible(True)
@@ -370,7 +374,7 @@ class DashboardPage(QWidget):
                     top_5_names = [r['app_name'] for r in rankings[:5]]
                     for day in weekly_data:
                         day['app_usage'] = {name: val for name, val in day['app_usage'].items() if name in top_5_names}
-                elif selected_filter != "TOP 5 most used":
+                else:
                     # 特定程式
                     for day in weekly_data:
                         day['app_usage'] = {name: val for name, val in day['app_usage'].items() if name == selected_filter}
@@ -389,7 +393,7 @@ class DashboardPage(QWidget):
                     top_5_names = [r['app_name'] for r in rankings[:5]]
                     for week in monthly_data:
                         week['app_usage'] = {name: val for name, val in week['app_usage'].items() if name in top_5_names}
-                elif selected_filter != "TOP 5 most used":
+                else:
                     # 特定程式
                     for week in monthly_data:
                         week['app_usage'] = {name: val for name, val in week['app_usage'].items() if name == selected_filter}
@@ -401,8 +405,9 @@ class DashboardPage(QWidget):
                 self.hourly_chart.update_chart({})
 
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Dashboard refresh error: {e}")
+            logger.error(f"Dashboard refresh error: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _show_date_picker(self):
         """顯示日期選擇對話框 - Style 1 現代極簡潮流風格"""
@@ -461,17 +466,13 @@ class DashboardPage(QWidget):
         dim_format = QTextCharFormat()
         dim_format.setForeground(QColor("#CCCCCC")) # 淺灰色 (無數據)
         
-        # 🚀 關鍵：全面覆寫年度日期格式以消除六日紅色
-        curr_year = calendar.selectedDate().year()
-        year_start = QDate(curr_year, 1, 1)
-        for i in range(366): # 涵蓋整年
-            qd = year_start.addDays(i)
-            # 轉換為 python date 物件以進行比較
-            pyd = date(qd.year(), qd.month(), qd.day())
-            if pyd in active_dates:
-                calendar.setDateTextFormat(qd, active_format)
-            else:
-                calendar.setDateTextFormat(qd, dim_format)
+        # 🚀 關鍵：優化格式設定效率，先設定每個星期的預設格式
+        for i in range(1, 8):
+            calendar.setWeekdayTextFormat(Qt.DayOfWeek(i), dim_format)
+        
+        # 針對有數據的日期設定特定格式
+        for d in active_dates:
+            calendar.setDateTextFormat(QDate(d.year, d.month, d.day), active_format)
 
         dialog_layout.addWidget(calendar)
         
