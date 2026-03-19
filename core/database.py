@@ -6,7 +6,7 @@ database.py - SQLite 資料庫模組
 
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional, List, Dict, Any
 
 
@@ -86,11 +86,11 @@ class UsageDatabase:
         finally:
             self._release_conn(conn)
 
-    def end_session(self, session_id: int):
+    def end_session(self, session_id: int, end_time: datetime = None):
         """結束一個 session，記錄結束時間並計算持續秒數"""
         conn = self._get_conn()
         try:
-            now = datetime.now()
+            now = end_time if end_time else datetime.now()
             row = conn.execute(
                 "SELECT start_time FROM usage_sessions WHERE id = ?",
                 (session_id,)
@@ -212,20 +212,50 @@ class UsageDatabase:
         finally:
             self._release_conn(conn)
 
+    def get_browser_sessions_in_range(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+        """查詢指定時間範圍內的瀏覽器 sessions（app_type='browser'）"""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM usage_sessions
+                   WHERE start_time >= ? AND start_time < ?
+                     AND app_type = 'browser'
+                     AND end_time IS NOT NULL
+                     AND duration_seconds > 0
+                   ORDER BY start_time ASC""",
+                (start.isoformat(), end.isoformat())
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            self._release_conn(conn)
+
     def update_session_url(self, session_id: int, url: str, window_title: str = ""):
         """更新 session 的 URL（來自瀏覽器擴充套件）"""
         conn = self._get_conn()
         try:
-            updates = ["url = ?"]
-            params = [url]
-            if window_title:
-                updates.append("window_title = ?")
-                params.append(window_title)
-            params.append(session_id)
-            conn.execute(
-                f"UPDATE usage_sessions SET {', '.join(updates)} WHERE id = ?",
-                params
-            )
-            conn.commit()
+            with conn:
+                conn.execute(
+                    "UPDATE usage_sessions SET url = ?, window_title = ? WHERE id = ?",
+                    (url, window_title, session_id)
+                )
         finally:
-            conn.close()
+            self._release_conn(conn)
+
+    def get_all_active_dates(self) -> List[date]:
+        """取得所有有紀錄的日期（用於日曆標記）"""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            # 取得 start_time 的日期部分並去重
+            cursor.execute("SELECT DISTINCT date(start_time) FROM usage_sessions")
+            dates = []
+            for row in cursor.fetchall():
+                if row[0]:
+                    try:
+                        d = datetime.strptime(row[0], '%Y-%m-%d').date()
+                        dates.append(d)
+                    except ValueError:
+                        continue
+            return sorted(dates)
+        finally:
+            self._release_conn(conn)

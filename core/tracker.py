@@ -85,7 +85,8 @@ class UsageTracker:
         self._current_session_id: Optional[int] = None
         self._current_app: Optional[str] = None
         self._current_title: Optional[str] = None
-        self._lock = threading.Lock()
+        # 必須使用可重入鎖 (RLock)，避免 pause() 與 _end_current_session() 造成的死結
+        self._lock = threading.RLock()
         self._on_app_change: Optional[Callable] = None
 
     def set_on_app_change(self, callback: Callable):
@@ -110,12 +111,12 @@ class UsageTracker:
         self._end_current_session()
         logger.info("Tracker stopped")
 
-    def pause(self):
+    def pause(self, idle_start_time=None):
         """暫停追蹤（閒置時呼叫）"""
         with self._lock:
             if not self._paused:
                 self._paused = True
-                self._end_current_session()
+                self._end_current_session(end_time=idle_start_time)
                 logger.info("Tracker paused (idle)")
 
     def resume(self):
@@ -198,15 +199,16 @@ class UsageTracker:
                 except Exception as e:
                     logger.error(f"App change callback error: {e}")
 
-    def _end_current_session(self):
+    def _end_current_session(self, end_time=None):
         """結束當前 session"""
         with self._lock:
             if self._current_session_id is not None:
                 try:
-                    self.db.end_session(self._current_session_id)
+                    self.db.end_session(self._current_session_id, end_time=end_time)
                 except Exception as e:
                     logger.error(f"Error ending session: {e}")
                 self._current_session_id = None
+
 
     def update_browser_url(self, url: str, title: str = ""):
         """更新當前瀏覽器 session 的 URL（由瀏覽器擴充套件呼叫）"""

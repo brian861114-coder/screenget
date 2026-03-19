@@ -3,14 +3,15 @@ dashboard_page.py - 展示介面（儀表板）
 顯示當天/當周/當月各軟體的使用狀況。
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import List, Dict, Any
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QButtonGroup, QSizePolicy, QComboBox
+    QScrollArea, QFrame, QButtonGroup, QSizePolicy, QComboBox,
+    QCalendarWidget, QDialog, QVBoxLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QDate
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 
 from core.analyzer import UsageAnalyzer
 from ui.charts import TimelineChart, UsageBarChart, HourlyChart
@@ -126,6 +127,7 @@ class DashboardPage(QWidget):
         super().__init__(parent)
         self.analyzer = analyzer
         self.current_period = 'daily'
+        self.target_date = date.today() # 當前查看的日期
         self._init_ui()
 
     def _init_ui(self):
@@ -198,6 +200,27 @@ class DashboardPage(QWidget):
             "color: #000000; font-size: 16px; font-weight: bold; margin-top: 8px;"
         )
         timeline_header.addWidget(section_timeline)
+
+        # 📅 選擇日期按鈕
+        self.btn_date_picker = QPushButton("📅 選擇日期")
+        self.btn_date_picker.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_date_picker.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F8FF;
+                color: #0078D7;
+                border: 1px solid #A2D2FF;
+                border-radius: 6px;
+                padding: 2px 10px;
+                font-size: 12px;
+                margin-left: 10px;
+                margin-top: 8px;
+            }
+            QPushButton:hover {
+                background-color: #E1F0FF;
+            }
+        """)
+        self.btn_date_picker.clicked.connect(self._show_date_picker)
+        timeline_header.addWidget(self.btn_date_picker)
         
         timeline_header.addStretch()
         
@@ -255,6 +278,15 @@ class DashboardPage(QWidget):
     def _on_period_change(self, btn: PeriodButton):
         """切換時間週期"""
         self.current_period = btn.period
+        
+        # 只在今日視圖顯示日期選擇按鈕
+        self.btn_date_picker.setVisible(btn.period == 'daily')
+        
+        # 每次切換回今日時，預設顯示當下日期
+        if btn.period == 'daily':
+            from datetime import date
+            self.target_date = date.today()
+
         # 更新所有按鈕樣式
         for b in self.period_group.buttons():
             b._update_style(b == btn)
@@ -270,9 +302,19 @@ class DashboardPage(QWidget):
         try:
             # 根據週期取得時間範圍
             if self.current_period == 'daily':
-                start, end = self.analyzer.get_today_range()
-                rankings = self.analyzer.get_daily_rankings()
-                total = self.analyzer.get_daily_total()
+                # 獲取指定日期的數據
+                target_date = self.target_date
+                start = datetime.combine(target_date, datetime.min.time())
+                end = datetime.combine(target_date, datetime.max.time())
+                
+                # 更新標題顯示
+                if target_date == date.today():
+                    self.card_total.title_label.setText("今日總使用時長 (點擊查看全部)")
+                else:
+                    self.card_total.title_label.setText(f"{target_date.strftime('%Y-%m-%d')} 總使用時長")
+
+                rankings = self.analyzer.get_app_rankings(start, end)
+                total = self.analyzer.get_total_usage(start, end)
             elif self.current_period == 'weekly':
                 start, end = self.analyzer.get_week_range()
                 rankings = self.analyzer.get_weekly_rankings()
@@ -293,26 +335,67 @@ class DashboardPage(QWidget):
             # 更新排行圖
             self.ranking_chart.update_chart(rankings)
 
-            # 更新時間段圖（僅日視圖有意義）
+            # 更新時間段圖
             if self.current_period == 'daily':
-                # 更新下拉選單內容（不建議頻繁更新，這裡僅在資料刷新時同步一次列表）
+                blocks = self.analyzer.get_time_blocks(start, end)
+                
+                # 更新下拉選單內容
                 self._update_timeline_filter_list(rankings)
 
                 selected_filter = self.timeline_filter.currentText()
-                blocks = self.analyzer.get_time_blocks(start, end)
                 
                 if selected_filter == "TOP 5 most used":
                     # 僅保留前五名的資料
                     top_5_names = [r['app_name'] for r in rankings[:5]]
                     filtered_blocks = [b for b in blocks if b['app_name'] in top_5_names]
-                    self.timeline_chart.update_chart(filtered_blocks, target_date=date.today())
+                    self.timeline_chart.update_chart(filtered_blocks, target_date=target_date)
                 else:
                     # 特定程式
                     filtered_blocks = [b for b in blocks if b['app_name'] == selected_filter]
                     self.timeline_chart.update_chart(filtered_blocks, target_date=date.today())
-
+                
+                # 恢復 24 小時圖表
+                self.hourly_chart.setVisible(True)
                 hourly = self.analyzer.get_hourly_usage(start, end)
                 self.hourly_chart.update_chart(hourly)
+            elif self.current_period == 'weekly':
+                # 同步過濾器設定
+                self._update_timeline_filter_list(rankings)
+                selected_filter = self.timeline_filter.currentText()
+                
+                weekly_data = self.analyzer.get_weekly_daily_totals()
+                
+                # 過濾資料
+                if selected_filter == "TOP 5 most used":
+                    top_5_names = [r['app_name'] for r in rankings[:5]]
+                    for day in weekly_data:
+                        day['app_usage'] = {name: val for name, val in day['app_usage'].items() if name in top_5_names}
+                elif selected_filter != "TOP 5 most used":
+                    # 特定程式
+                    for day in weekly_data:
+                        day['app_usage'] = {name: val for name, val in day['app_usage'].items() if name == selected_filter}
+
+                self.timeline_chart.update_weekly_monthly_chart(weekly_data)
+                self.hourly_chart.update_chart({})
+            elif self.current_period == 'monthly':
+                # 同步過濾器設定
+                self._update_timeline_filter_list(rankings)
+                selected_filter = self.timeline_filter.currentText()
+                
+                monthly_data = self.analyzer.get_monthly_weekly_totals()
+                
+                # 過濾資料
+                if selected_filter == "TOP 5 most used":
+                    top_5_names = [r['app_name'] for r in rankings[:5]]
+                    for week in monthly_data:
+                        week['app_usage'] = {name: val for name, val in week['app_usage'].items() if name in top_5_names}
+                elif selected_filter != "TOP 5 most used":
+                    # 特定程式
+                    for week in monthly_data:
+                        week['app_usage'] = {name: val for name, val in week['app_usage'].items() if name == selected_filter}
+
+                self.timeline_chart.update_weekly_monthly_chart(monthly_data)
+                self.hourly_chart.update_chart({})
             else:
                 self.timeline_chart.update_chart([])
                 self.hourly_chart.update_chart({})
@@ -320,6 +403,117 @@ class DashboardPage(QWidget):
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Dashboard refresh error: {e}")
+
+    def _show_date_picker(self):
+        """顯示日期選擇對話框 - Style 1 現代極簡潮流風格"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("📆 選擇日期")
+        dialog.setFixedWidth(420)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #D7F5F2; /* 主畫面背景色 */
+                border-radius: 15px;
+            }
+        """)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(20, 20, 20, 20)
+        dialog_layout.setSpacing(15)
+
+        # 獲取所有有數據的日期
+        active_dates = self.analyzer.get_active_dates()
+        active_qdates = [QDate(d.year, d.month, d.day) for d in active_dates]
+
+        calendar = QCalendarWidget()
+        calendar.setGridVisible(False) # 為了風格一致，關閉原生格線
+        calendar.setNavigationBarVisible(True)
+        calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader) # 隱藏週數
+        
+        # 🟢 Style 1 核心樣式設定
+        calendar.setStyleSheet("""
+            QCalendarWidget QAbstractItemView {
+                background-color: white;
+                border-radius: 10px;
+                outline: 0;
+                selection-background-color: #A2D2FF;
+                selection-color: black;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #D7F5F2;
+                min-height: 40px;
+            }
+            QCalendarWidget QToolButton {
+                color: black;
+                font-weight: bold;
+                background-color: transparent;
+                border-radius: 5px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background-color: #FFFFFF;
+            }
+        """)
+
+        # 📅 設定日期格式 (Style 1: 統一黑色或灰色，不再有紅色六日)
+        # 1. 準備格式
+        active_format = QTextCharFormat()
+        active_format.setForeground(QColor("#000000")) # 深黑色 (有數據)
+        active_format.setFontWeight(QFont.Weight.Bold)
+
+        dim_format = QTextCharFormat()
+        dim_format.setForeground(QColor("#CCCCCC")) # 淺灰色 (無數據)
+        
+        # 🚀 關鍵：全面覆寫年度日期格式以消除六日紅色
+        curr_year = calendar.selectedDate().year()
+        year_start = QDate(curr_year, 1, 1)
+        for i in range(366): # 涵蓋整年
+            qd = year_start.addDays(i)
+            # 轉換為 python date 物件以進行比較
+            pyd = date(qd.year(), qd.month(), qd.day())
+            if pyd in active_dates:
+                calendar.setDateTextFormat(qd, active_format)
+            else:
+                calendar.setDateTextFormat(qd, dim_format)
+
+        dialog_layout.addWidget(calendar)
+        
+        btn_confirm = QPushButton("確認選擇")
+        btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_confirm.setMinimumHeight(45)
+        btn_confirm.setStyleSheet("""
+            QPushButton {
+                background-color: #A2D2FF;
+                color: black;
+                border: none;
+                border-radius: 10px;
+                font-size: 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #92C2EF;
+                border: 1px solid #FFFFFF;
+            }
+        """)
+        
+        def on_confirm():
+            selected_qdate = calendar.selectedDate()
+            selected_date = date(selected_qdate.year(), selected_qdate.month(), selected_qdate.day())
+            
+            if selected_date in active_dates:
+                self.target_date = selected_date
+                self.refresh_data()
+                dialog.accept()
+            else:
+                from PyQt6.QtWidgets import QMessageBox
+                msg = QMessageBox(dialog)
+                msg.setWindowTitle("提示")
+                msg.setText("該日期沒有紀錄")
+                msg.setInformativeText("請選擇深黑色的日期查看數據。")
+                msg.setStyleSheet("QLabel{ min-width: 200px; color: black; }")
+                msg.exec()
+
+        btn_confirm.clicked.connect(on_confirm)
+        dialog_layout.addWidget(btn_confirm)
+
+        dialog.exec()
 
     def _update_timeline_filter_list(self, rankings: List[Dict[str, Any]]):
         """動態更新下拉選單中的程式名稱列表"""

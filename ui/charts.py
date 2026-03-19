@@ -127,6 +127,53 @@ class TimelineChart(FigureCanvas):
         self.fig.tight_layout(pad=1.5)
         self.draw()
 
+    def update_weekly_monthly_chart(self, data: List[Dict[str, Any]]):
+        """更新週/月統計圖，X 軸為日期或週別，Y 軸為小時總量"""
+        self.ax.clear()
+        self._setup_style()
+
+        if not data:
+            self.ax.text(0.5, 0.5, '暫無資料', transform=self.ax.transAxes,
+                        ha='center', va='center', color=DARK_TEXT, fontsize=14)
+            self.draw()
+            return
+
+        labels = [d['label'] for d in data]
+        
+        # 取得所有 app 名稱以便著色 (排除白名單已在 analyzer 處理)
+        all_apps = set()
+        for d in data:
+            all_apps.update(d['app_usage'].keys())
+        apps = sorted(list(all_apps), key=lambda a: sum(d['app_usage'].get(a, 0) for d in data), reverse=True)
+
+        # 繪製堆疊圖 (縱軸為小時)
+        bottoms = [0.0] * len(data)
+        for app_name in apps:
+            # 轉換為小時
+            values = [d['app_usage'].get(app_name, 0) / 3600.0 for d in data]
+            color = get_color_for_app(app_name, apps)
+            self.ax.bar(range(len(labels)), values, bottom=bottoms, color=color,
+                       alpha=0.85, edgecolor='none', width=0.6, label=app_name)
+            bottoms = [bottoms[i] + values[i] for i in range(len(data))]
+
+        self.ax.set_xticks(range(len(labels)))
+        self.ax.set_xticklabels(labels, fontsize=9, color=DARK_TEXT)
+        self.ax.set_ylabel('使用時長 (小時)', color=DARK_TEXT, fontsize=10)
+        self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
+        
+        # 設定 Y 軸下限為 0
+        self.ax.set_ylim(bottom=0)
+        
+        # 圖例放右側 (與今日視圖一致)
+        if apps:
+            self.ax.legend(
+                loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0,
+                fontsize=8, frameon=False, labelcolor=DARK_TEXT
+            )
+
+        self.fig.tight_layout(pad=1.5)
+        self.draw()
+
 
 class UsageBarChart(FigureCanvas):
     """使用時長橫向長條圖 - 顯示各程式的使用排行"""

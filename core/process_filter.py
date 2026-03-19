@@ -155,7 +155,19 @@ class ProcessFilter:
         if name_lower in browser_names:
             return browser_names[name_lower]
 
-        # 移除 .exe 後綴
+        # 針對遊戲引擎等常見的「泛用執行檔名稱」，優先使用視窗標題作為顯示名稱
+        generic_names = {
+            'client-win64-shipping.exe',
+            'client-win64-test.exe',
+            'ue4game-win64-shipping.exe',
+            'ue5game-win64-shipping.exe',
+            'unityplayer.exe',
+            'game.exe',
+        }
+        if name_lower in generic_names and window_title and window_title.strip():
+            return window_title.strip()
+
+        # 移除 .exe 後綴作為預設顯示名稱
         display_name = process_name
         if display_name.lower().endswith('.exe'):
             display_name = display_name[:-4]

@@ -138,7 +138,11 @@ class DetailListPage(QWidget):
             start, end = self.analyzer.get_month_range()
             
         # 取得排行
-        rankings = self.analyzer.get_app_rankings(start, end, app_type=self.app_type)
+        if self.app_type == 'browser':
+            # 瀏覽器類型使用網站細分排行
+            rankings = self.analyzer.get_browser_site_rankings(start, end)
+        else:
+            rankings = self.analyzer.get_app_rankings(start, end, app_type=self.app_type)
         
         # 如果是顯示全部程式時，排除排行中總時長為 0 的 (雖然 get_app_rankings 通常只回會有紀錄的)
         rankings = [r for r in rankings if r['total_seconds'] > 0]

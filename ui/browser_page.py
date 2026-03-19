@@ -138,8 +138,8 @@ class BrowserPage(QWidget):
                 start, end = self.analyzer.get_month_range()
                 days = 30
 
-            # 取得瀏覽器專屬排行
-            rankings = self.analyzer.get_app_rankings(start, end, app_type='browser')
+            # 取得瀏覽器各網站排行（從 window_title 或 url 細分）
+            rankings = self.analyzer.get_browser_site_rankings(start, end)
             total = sum(r['total_seconds'] for r in rankings)
 
             # 更新統計卡片

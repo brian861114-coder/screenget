@@ -21,13 +21,26 @@ class SettingsPage(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        # 使用 ScrollArea 包裹內容
+        from PyQt6.QtWidgets import QScrollArea, QWidget
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none; background-color: transparent;")
+        
+        content_widget = QWidget()
+        content_widget.setObjectName("ContentWidget")
+        content_widget.setStyleSheet("#ContentWidget { background-color: transparent; }")
+        layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(20)
 
         # ─── 標題 ───
         title = QLabel("⚙️ 應用程式設定")
-        title.setStyleSheet("color: #000000; font-size: 22px; font-weight: bold;")
+        title.setStyleSheet("color: #000000; font-size: 22px; font-weight: bold; border: none;")
         layout.addWidget(title)
         
         # ─── 語言設定 ───
@@ -61,6 +74,100 @@ class SettingsPage(QWidget):
         auto_layout.addWidget(self.auto_check)
         
         layout.addWidget(auto_group)
+        
+        # ─── Chrome 外掛設定 ───
+        chrome_group = QFrame()
+        chrome_group.setStyleSheet("background-color: #FFFFFF; border-radius: 12px; border: 1px solid #B9FBC0;")
+        chrome_layout = QVBoxLayout(chrome_group)
+        chrome_layout.setContentsMargins(16, 16, 16, 16)
+        chrome_layout.setSpacing(6)
+        
+        chrome_header = QLabel("🧩 Chrome 擴充功能設定 (網頁追蹤)")
+        chrome_header.setStyleSheet("font-weight: bold; font-size: 18px; color: #000000; border: none; margin-bottom: 5px;")
+        chrome_layout.addWidget(chrome_header)
+        
+        import os
+        from PyQt6.QtGui import QPixmap
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ext_path = os.path.join(base_dir, 'browser_extension')
+            icon_dev_path = os.path.join(base_dir, '開發人員模式.png')
+            icon_load_path = os.path.join(base_dir, '載入未封裝項目.png')
+        except:
+            ext_path = "專案資料夾內的 browser_extension 目錄"
+            icon_dev_path = ""
+            icon_load_path = ""
+
+        def add_step(layout, text, icon_path=None):
+            h_layout = QHBoxLayout()
+            h_layout.setContentsMargins(0, 0, 0, 0)
+            h_layout.setSpacing(8)
+            
+            lbl = QLabel(text)
+            lbl.setStyleSheet("color: #000000; font-size: 13px; border: none;")
+            lbl.setWordWrap(True)
+            h_layout.addWidget(lbl)
+            
+            if icon_path and os.path.exists(icon_path):
+                img_lbl = QLabel()
+                pixmap = QPixmap(icon_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaledToHeight(22, Qt.TransformationMode.SmoothTransformation)
+                    img_lbl.setPixmap(scaled_pixmap)
+                    img_lbl.setStyleSheet("border: none;")
+                    h_layout.addWidget(img_lbl)
+            
+            h_layout.addStretch()
+            layout.addLayout(h_layout)
+
+        subtitle = QLabel("如何啟用 Chrome 網站追蹤功能：")
+        subtitle.setStyleSheet("color: #000000; font-weight: bold; border: none; font-size: 14px; margin-top: 5px;")
+        chrome_layout.addWidget(subtitle)
+        
+        add_step(chrome_layout, "1. 開啟 Chrome 瀏覽器，進入 [ chrome://extensions/ ]")
+        add_step(chrome_layout, "2. 開啟右上角的「開發人員模式」。", icon_dev_path)
+        add_step(chrome_layout, "3. 點擊「載入未封裝項目」。", icon_load_path)
+        
+        path_lbl = QLabel(f"4. 選擇以下目錄路徑：\n{ext_path}")
+        path_lbl.setStyleSheet("""
+            QLabel {
+                color: #000000; 
+                font-size: 12px; 
+                border: 1px dashed #A2D2FF; 
+                padding: 10px; 
+                background-color: #F8FDFF;
+                border-radius: 4px;
+                margin: 5px 0px;
+            }
+        """)
+        path_lbl.setWordWrap(True)
+        path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        chrome_layout.addWidget(path_lbl)
+        
+        add_step(chrome_layout, "5. 將外掛固定在工具列，即可開始追蹤造訪的網站網域。")
+        
+        btn_copy_ext = QPushButton("📋 複製擴充功能頁面網址")
+        btn_copy_ext.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_copy_ext.setStyleSheet("""
+            QPushButton {
+                background-color: #A2D2FF; 
+                color: #000000;
+                font-weight: bold; 
+                border-radius: 6px;
+                padding: 8px; 
+                margin-top: 10px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #BDE4FF; }
+        """)
+        from PyQt6.QtWidgets import QApplication
+        btn_copy_ext.clicked.connect(lambda: [
+            QApplication.clipboard().setText("chrome://extensions/"), 
+            QMessageBox.information(self, "提示", "網址已複製到剪貼簿。")
+        ])
+        chrome_layout.addWidget(btn_copy_ext)
+        
+        layout.addWidget(chrome_group)
         
         # ─── 白名單 ───
         white_group = QFrame()
@@ -96,8 +203,29 @@ class SettingsPage(QWidget):
         self.btn_remove.setStyleSheet("background-color: #FFB7B2; font-weight: bold; padding: 5px;")
         white_layout.addWidget(self.btn_remove)
         
+        # 導出按鈕
+        self.btn_export = QPushButton("📤 導出白名單 (複製到剪貼簿)")
+        self.btn_export.clicked.connect(self._export_whitelist)
+        self.btn_export.setStyleSheet("background-color: #B9FBC0; font-weight: bold; padding: 5px; margin-top: 5px;")
+        white_layout.addWidget(self.btn_export)
+        
         layout.addWidget(white_group)
         layout.addStretch()
+
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+
+    def _export_whitelist(self):
+        """導出白名單內容到剪貼簿"""
+        from PyQt6.QtWidgets import QApplication
+        whitelist = self.settings_manager.settings.get('whitelist', [])
+        if not whitelist:
+            QMessageBox.information(self, "提示", "白名單為空。")
+            return
+            
+        text = "\n".join(whitelist)
+        QApplication.clipboard().setText(text)
+        QMessageBox.information(self, "提示", "已複製到剪貼簿")
 
     def _on_language_changed(self, index):
         langs = ['zh_TW', 'en_US', 'ja_JP']

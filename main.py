@@ -144,7 +144,7 @@ class ScreenGetApp:
     def _on_idle(self, idle_start: datetime):
         """閒置回呼 - 暫停追蹤"""
         logger.info(f"Idle detected at {idle_start}")
-        self.tracker.pause()
+        self.tracker.pause(idle_start_time=idle_start)
         self.main_window.update_tracking_status(True, is_idle=True)
         self.system_tray.update_tooltip("ScreenGet - 😴 閒置中")
 
