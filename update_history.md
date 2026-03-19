@@ -14,7 +14,7 @@
 - 更新日曆為 Style 1 現代極簡潮流風格
 - 建立「歷史問題與解決.md」紀錄文件
 
-## [2026-03-20]
+## [2026-03-19] (Bug Fixes)
 - **修復 Bug 1 (Dashboard)**: 修正特定程式篩選時圖表日期寫死為今日的問題。
 - **修復 Bug 2 (IdleDetector)**: 修正閒置開始時間計算邏輯，確保暫停時間戳記準確。
 - **修復 Bug 3 (NativeHost)**: 在程式結束時正確關閉資料庫連線，確保 WAL 回寫。
@@ -24,7 +24,7 @@
 - **修復 Bug 7 (Database)**: 加入 `timeout=10` 參數，防止多進程同時存取時的鎖定錯誤。
 - **修復 Bug 8 (ProcessFilter)**: 在 `get_display_name` 加入回退機制，防止回傳空字串。
 
-## [2026-03-20] (下午)
+## [2026-03-19] (性能優化)
 - **Matplotlib 記憶體管理**: 在 Chart 類別加入 `__del__` 方法以釋放資源。
 - **Dashboard 介面優化**:
     - 新增載入中的等候游標與 `QApplication.processEvents()`。
