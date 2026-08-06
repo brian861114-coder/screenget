@@ -1,57 +1,74 @@
-"""
-charts.py - 圖表元件
-使用 matplotlib 嵌入 PyQt6，繪製使用時間段長條圖和排行圖。
+﻿"""
+charts.py - 圖表元件（可點擊 + 統一配色 + 單位刻度）
 """
 
 import matplotlib
-matplotlib.use('QtAgg')
+matplotlib.use("QtAgg")
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.patches import FancyBboxPatch
-from matplotlib.dates import DateFormatter, HourLocator
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Dict, Any
-import numpy as np
+import matplotlib.pyplot as plt
 import platform
 
-# 設定中文字體以解決亂碼問題
-if platform.system() == 'Windows':
-    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial']
-else:
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
-plt.rcParams['axes.unicode_minus'] = False
+from PyQt6.QtCore import pyqtSignal
 
-# 淺色主題配色 (基於 #D7F5F2)
-DARK_BG = '#D7F5F2'
-DARK_SURFACE = '#FFFFFF'
-DARK_TEXT = '#000000'
-DARK_GRID = '#B9FBC0'
-ACCENT_COLORS = [
-    '#A2D2FF', '#B9FBC0', '#FFD700', '#FFB7B2',
-    '#B2E2F2', '#E2F0CB', '#FFDAC1', '#FF9AA2',
-    '#C7CEEA', '#97C1A9', '#DFE3E6', '#BDD9E4',
-]
+if platform.system() == "Windows":
+    plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei", "SimHei", "Arial"]
+else:
+    plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+from core.i18n import t
+from core.units import resolve_chart_scale
+from ui.theme import BG, SURFACE, TEXT, BORDER, ACCENT, CHART_COLORS, sp
+
+DARK_BG = BG
+DARK_SURFACE = SURFACE
+DARK_TEXT = TEXT
+DARK_GRID = BORDER
+ACCENT_COLORS = CHART_COLORS
 
 
 def get_color_for_app(app_name: str, app_list: List[str] = None) -> str:
-    """取得程式對應的顏色"""
     if app_list:
         try:
             idx = app_list.index(app_name) % len(ACCENT_COLORS)
             return ACCENT_COLORS[idx]
         except ValueError:
             pass
-    # 使用 hash 取得穩定的顏色
-    idx = hash(app_name) % len(ACCENT_COLORS)
+    idx = abs(hash(app_name)) % len(ACCENT_COLORS)
     return ACCENT_COLORS[idx]
 
 
-class TimelineChart(FigureCanvas):
-    """使用時間段堆疊直條圖 - 顯示一天中各小時的使用情況"""
+def _cred_suffix(cred: str) -> str:
+    if cred == "exact":
+        return f" ·{t('cred_short_exact')}"
+    if cred == "mixed":
+        return f" ·{t('cred_short_mixed')}"
+    if cred == "estimated":
+        return f" ·{t('cred_short_est')}"
+    return ""
 
+
+def _tick_size() -> int:
+    return sp(8)
+
+
+def _label_size() -> int:
+    return sp(10)
+
+
+def _body_size() -> int:
+    return sp(9)
+
+
+def _empty_size() -> int:
+    return sp(14)
+
+
+class TimelineChart(FigureCanvas):
     def __init__(self, parent=None, width=10, height=3):
         self.fig = Figure(figsize=(width, height), facecolor=DARK_BG)
         super().__init__(self.fig)
@@ -65,71 +82,74 @@ class TimelineChart(FigureCanvas):
 
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
-        self.ax.tick_params(colors=DARK_TEXT, labelsize=8)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(DARK_GRID)
-        self.ax.spines['left'].set_color(DARK_GRID)
+        self.ax.tick_params(colors=DARK_TEXT, labelsize=_tick_size())
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["bottom"].set_color(DARK_GRID)
+        self.ax.spines["left"].set_color(DARK_GRID)
 
-    def update_chart(self, time_blocks: List[Dict[str, Any]], target_date=None):
-        """更新時間段堆疊直條圖"""
+    def update_chart(self, time_blocks: List[Dict[str, Any]], target_date=None, unit: str = "auto"):
         self.ax.clear()
         self._setup_style()
 
         if not time_blocks:
-            self.ax.text(0.5, 0.5, '暫無資料', transform=self.ax.transAxes,
-                        ha='center', va='center', color=DARK_TEXT, fontsize=14)
-            self.draw()
+            self.ax.text(
+                0.5, 0.5, t("no_data"), transform=self.ax.transAxes,
+                ha="center", va="center", color=DARK_TEXT, fontsize=_empty_size(),
+            )
+            self.draw_idle()
             return
 
-        # 計算各 app 總使用量，依使用量多→少排序
         app_totals: Dict[str, float] = {}
         for block in time_blocks:
-            name = block['app_name']
-            dur = (block['end'] - block['start']).total_seconds()
+            name = block["app_name"]
+            dur = (block["end"] - block["start"]).total_seconds()
             app_totals[name] = app_totals.get(name, 0) + dur
         apps = sorted(app_totals.keys(), key=lambda a: app_totals[a], reverse=True)
 
-        # 累計每小時、每個 app 的使用分鐘數
         hourly_per_app: Dict[str, list] = {app: [0.0] * 24 for app in apps}
         for block in time_blocks:
-            app_name = block['app_name']
-            current = block['start']
-            end = block['end']
+            app_name = block["app_name"]
+            current = block["start"]
+            end = block["end"]
             while current < end:
                 hour = current.hour
                 next_hour = current.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                 slice_end = min(next_hour, end)
-                hourly_per_app[app_name][hour] += (slice_end - current).total_seconds() / 60.0
+                hourly_per_app[app_name][hour] += (slice_end - current).total_seconds()
                 current = slice_end
 
-        # 繪製堆疊直條圖
+        max_stack = max(
+            (sum(hourly_per_app[app][h] for app in apps) for h in range(24)),
+            default=0,
+        )
+        divisor, axis_key = resolve_chart_scale(max_stack, unit)
+
         hours = list(range(24))
         bottoms = [0.0] * 24
         for app_name in apps:
-            values = hourly_per_app[app_name]
+            values = [v / divisor for v in hourly_per_app[app_name]]
             color = get_color_for_app(app_name, apps)
-            self.ax.bar(hours, values, bottom=bottoms, color=color,
-                       alpha=0.85, edgecolor='none', width=0.85, label=app_name)
+            self.ax.bar(
+                hours, values, bottom=bottoms, color=color,
+                alpha=0.88, edgecolor="none", width=0.85, label=app_name,
+            )
             bottoms = [bottoms[i] + values[i] for i in range(24)]
 
-        # X 軸
         self.ax.set_xticks(hours)
-        self.ax.set_xticklabels([f'{h:02d}' for h in hours], fontsize=7, color=DARK_TEXT)
-        self.ax.set_xlabel('當日時間', color=DARK_TEXT, fontsize=10)
-        self.ax.set_ylabel('使用時間 (分鐘)', color=DARK_TEXT, fontsize=10)
+        self.ax.set_xticklabels([f"{h:02d}" for h in hours], fontsize=_tick_size(), color=DARK_TEXT)
+        self.ax.set_xlabel(t("chart_hour"), color=DARK_TEXT, fontsize=_label_size())
+        self.ax.set_ylabel(t(axis_key), color=DARK_TEXT, fontsize=_label_size())
         self.ax.set_xlim(-0.5, 23.5)
-        self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
+        self.ax.grid(axis="y", color=DARK_GRID, alpha=0.3, linestyle="--")
 
-        # 圖例放右側
         if apps:
             self.ax.legend(
-                loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0,
-                fontsize=8, frameon=False, labelcolor=DARK_TEXT
+                loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0,
+                fontsize=_tick_size(), frameon=False, labelcolor=DARK_TEXT,
             )
-
         self.fig.tight_layout(pad=1.5)
-        self.draw()
+        self.draw_idle()
 
     def update_weekly_monthly_chart(self, data: List[Dict[str, Any]]):
         """更新週/月統計圖，X 軸為日期或週別，Y 軸為小時總量"""
@@ -180,13 +200,18 @@ class TimelineChart(FigureCanvas):
 
 
 class UsageBarChart(FigureCanvas):
-    """使用時長橫向長條圖 - 顯示各程式的使用排行"""
+    """可點擊的橫向排行圖"""
+
+    item_clicked = pyqtSignal(str)
 
     def __init__(self, parent=None, width=10, height=5):
         self.fig = Figure(figsize=(width, height), facecolor=DARK_BG)
         super().__init__(self.fig)
         self.setParent(parent)
         self.ax = self.fig.add_subplot(111)
+        self._names: List[str] = []
+        self._bars = None
+        self._cid = self.mpl_connect("button_press_event", self._on_click)
         self._setup_style()
 
     def __del__(self):
@@ -195,52 +220,70 @@ class UsageBarChart(FigureCanvas):
 
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
-        self.ax.tick_params(colors=DARK_TEXT, labelsize=9)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(DARK_GRID)
-        self.ax.spines['left'].set_color(DARK_GRID)
+        self.ax.tick_params(colors=DARK_TEXT, labelsize=_body_size())
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["bottom"].set_color(DARK_GRID)
+        self.ax.spines["left"].set_color(DARK_GRID)
 
-    def update_chart(self, rankings: List[Dict[str, Any]], max_items: int = 10):
-        """更新排行圖表"""
+    def update_chart(self, rankings: List[Dict[str, Any]], max_items: int = 10, unit: str = "auto"):
         self.ax.clear()
         self._setup_style()
+        self._names = []
+        self._bars = None
 
         if not rankings:
-            self.ax.text(0.5, 0.5, '暫無資料', transform=self.ax.transAxes,
-                        ha='center', va='center', color=DARK_TEXT, fontsize=14)
-            self.draw()
+            self.ax.text(
+                0.5, 0.5, t("no_data"), transform=self.ax.transAxes,
+                ha="center", va="center", color=DARK_TEXT, fontsize=_empty_size(),
+            )
+            self.draw_idle()
             return
 
-        # 限制顯示數量
         data = rankings[:max_items]
-        data.reverse()  # 反轉讓最高的在最上面
+        data.reverse()
+        self._names = [d["app_name"] for d in data]
+        labels = [
+            f"{d['app_name']}{_cred_suffix(d.get('credibility', ''))}"
+            for d in data
+        ]
+        max_secs = max((d["total_seconds"] for d in data), default=0)
+        divisor, axis_key = resolve_chart_scale(max_secs, unit)
+        values = [d["total_seconds"] / divisor for d in data]
+        colors = [get_color_for_app(n) for n in self._names]
 
-        names = [d['app_name'] for d in data]
-        values = [d['total_seconds'] / 60 for d in data]  # 轉換為分鐘
-        colors = [get_color_for_app(n) for n in names]
+        self._bars = self.ax.barh(
+            range(len(self._names)), values, color=colors,
+            alpha=0.88, height=0.6, edgecolor="none", picker=True,
+        )
+        self.ax.set_yticks(range(len(self._names)))
+        self.ax.set_yticklabels(labels, fontsize=_body_size(), color=DARK_TEXT)
+        self.ax.set_xlabel(t(axis_key), color=DARK_TEXT, fontsize=_label_size())
 
-        bars = self.ax.barh(range(len(names)), values, color=colors,
-                           alpha=0.85, height=0.6, edgecolor='none')
+        pad = (max(values) * 0.01) if values else 0.5
+        for bar, d in zip(self._bars, data):
+            self.ax.text(
+                bar.get_width() + pad,
+                bar.get_y() + bar.get_height() / 2,
+                d["formatted_time"], va="center",
+                color=DARK_TEXT, fontsize=_tick_size(), fontweight="bold",
+            )
 
-        self.ax.set_yticks(range(len(names)))
-        self.ax.set_yticklabels(names, fontsize=9, color=DARK_TEXT)
-        self.ax.set_xlabel('使用時間 (分鐘)', color=DARK_TEXT, fontsize=10)
-
-        # 在條形圖右側顯示時間
-        for i, (bar, d) in enumerate(zip(bars, data)):
-            self.ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
-                        d['formatted_time'], va='center',
-                        color=DARK_TEXT, fontsize=8, fontweight='bold')
-
-        self.ax.grid(axis='x', color=DARK_GRID, alpha=0.3, linestyle='--')
+        self.ax.grid(axis="x", color=DARK_GRID, alpha=0.3, linestyle="--")
         self.fig.tight_layout(pad=1.5)
-        self.draw()
+        self.draw_idle()
+
+    def _on_click(self, event):
+        if event.inaxes != self.ax or not self._bars or not self._names:
+            return
+        if event.ydata is None:
+            return
+        idx = int(round(event.ydata))
+        if 0 <= idx < len(self._names):
+            self.item_clicked.emit(self._names[idx])
 
 
 class HourlyChart(FigureCanvas):
-    """24 小時使用分佈圖"""
-
     def __init__(self, parent=None, width=10, height=3):
         self.fig = Figure(figsize=(width, height), facecolor=DARK_BG)
         super().__init__(self.fig)
@@ -254,38 +297,31 @@ class HourlyChart(FigureCanvas):
 
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
-        self.ax.tick_params(colors=DARK_TEXT, labelsize=8)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(DARK_GRID)
-        self.ax.spines['left'].set_color(DARK_GRID)
+        self.ax.tick_params(colors=DARK_TEXT, labelsize=_tick_size())
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["bottom"].set_color(DARK_GRID)
+        self.ax.spines["left"].set_color(DARK_GRID)
 
-    def update_chart(self, hourly_data: Dict[int, float]):
-        """更新 24 小時分佈圖"""
+    def update_chart(self, hourly_data: Dict[int, float], unit: str = "auto"):
         self.ax.clear()
         self._setup_style()
-
         hours = list(range(24))
-        values = [hourly_data.get(h, 0) / 60 for h in hours]  # 轉換為分鐘
-
-        colors = ['#00d2ff' if v > 0 else DARK_GRID for v in values]
-
-        self.ax.bar(hours, values, color=colors, alpha=0.85,
-                   edgecolor='none', width=0.8)
-
+        max_secs = max((hourly_data.get(h, 0) for h in hours), default=0)
+        divisor, axis_key = resolve_chart_scale(max_secs, unit)
+        values = [hourly_data.get(h, 0) / divisor for h in hours]
+        colors = [ACCENT if v > 0 else DARK_GRID for v in values]
+        self.ax.bar(hours, values, color=colors, alpha=0.88, edgecolor="none", width=0.8)
         self.ax.set_xticks(hours)
-        self.ax.set_xticklabels([f'{h:02d}' for h in hours],
-                                fontsize=7, color=DARK_TEXT)
-        self.ax.set_xlabel('當日時間', color=DARK_TEXT, fontsize=10)
-        self.ax.set_ylabel('使用比例', color=DARK_TEXT, fontsize=10)
-        self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
+        self.ax.set_xticklabels([f"{h:02d}" for h in hours], fontsize=_tick_size(), color=DARK_TEXT)
+        self.ax.set_xlabel(t("chart_hour"), color=DARK_TEXT, fontsize=_label_size())
+        self.ax.set_ylabel(t(axis_key), color=DARK_TEXT, fontsize=_label_size())
+        self.ax.grid(axis="y", color=DARK_GRID, alpha=0.3, linestyle="--")
         self.fig.tight_layout(pad=1.5)
-        self.draw()
+        self.draw_idle()
 
 
 class TrendChart(FigureCanvas):
-    """使用趨勢折線圖（過去 N 天）"""
-
     def __init__(self, parent=None, width=10, height=3):
         self.fig = Figure(figsize=(width, height), facecolor=DARK_BG)
         super().__init__(self.fig)
@@ -299,38 +335,37 @@ class TrendChart(FigureCanvas):
 
     def _setup_style(self):
         self.ax.set_facecolor(DARK_SURFACE)
-        self.ax.tick_params(colors=DARK_TEXT, labelsize=8)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(DARK_GRID)
-        self.ax.spines['left'].set_color(DARK_GRID)
+        self.ax.tick_params(colors=DARK_TEXT, labelsize=_tick_size())
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["bottom"].set_color(DARK_GRID)
+        self.ax.spines["left"].set_color(DARK_GRID)
 
-    def update_chart(self, trend_data: List[Dict[str, Any]]):
-        """更新趨勢圖"""
+    def update_chart(self, trend_data: List[Dict[str, Any]], unit: str = "auto"):
         self.ax.clear()
         self._setup_style()
-
         if not trend_data:
-            self.ax.text(0.5, 0.5, '暫無資料', transform=self.ax.transAxes,
-                        ha='center', va='center', color=DARK_TEXT, fontsize=14)
-            self.draw()
+            self.ax.text(
+                0.5, 0.5, t("no_data"), transform=self.ax.transAxes,
+                ha="center", va="center", color=DARK_TEXT, fontsize=_empty_size(),
+            )
+            self.draw_idle()
             return
 
-        dates = [d['date_str'] for d in trend_data]
-        values = [d['total_seconds'] / 60 for d in trend_data]  # 分鐘
-
-        self.ax.plot(dates, values, color='#00d2ff', linewidth=2,
-                    marker='o', markersize=6, markerfacecolor='#7b2ff7',
-                    markeredgecolor='#00d2ff', markeredgewidth=1.5)
-
-        # 填充面積
-        self.ax.fill_between(dates, values, alpha=0.1, color='#00d2ff')
-
-        self.ax.set_xlabel('日期', color=DARK_TEXT, fontsize=10)
-        self.ax.set_ylabel('分鐘', color=DARK_TEXT, fontsize=10)
-        self.ax.grid(axis='y', color=DARK_GRID, alpha=0.3, linestyle='--')
-
-        plt.setp(self.ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-
+        dates = [d["date_str"] for d in trend_data]
+        max_secs = max((d["total_seconds"] for d in trend_data), default=0)
+        divisor, axis_key = resolve_chart_scale(max_secs, unit)
+        short_key = "chart_hours_short" if divisor >= 3600 else "chart_minutes_short"
+        values = [d["total_seconds"] / divisor for d in trend_data]
+        self.ax.plot(
+            dates, values, color=ACCENT, linewidth=2,
+            marker="o", markersize=6, markerfacecolor=ACCENT,
+            markeredgecolor=ACCENT, markeredgewidth=1.2,
+        )
+        self.ax.fill_between(dates, values, alpha=0.12, color=ACCENT)
+        self.ax.set_xlabel(t("chart_date"), color=DARK_TEXT, fontsize=_label_size())
+        self.ax.set_ylabel(t(short_key), color=DARK_TEXT, fontsize=_label_size())
+        self.ax.grid(axis="y", color=DARK_GRID, alpha=0.3, linestyle="--")
+        plt.setp(self.ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
         self.fig.tight_layout(pad=1.5)
-        self.draw()
+        self.draw_idle()

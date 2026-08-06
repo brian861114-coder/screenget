@@ -23,13 +23,14 @@ class LASTINPUTINFO(ctypes.Structure):
 
 
 def get_idle_seconds() -> float:
-    """取得使用者閒置秒數"""
+    """取得使用者閒置秒數（與 GetLastInputInfo 同用 32-bit tick，並處理溢位）"""
     lii = LASTINPUTINFO()
     lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
-    if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-        millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
-        return millis / 1000.0
-    return 0.0
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+        return 0.0
+    # LASTINPUTINFO.dwTime 與 GetTickCount 同為 32-bit，需遮罩處理溢位
+    millis = (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) & 0xFFFFFFFF
+    return millis / 1000.0
 
 
 class IdleDetector:
@@ -79,6 +80,12 @@ class IdleDetector:
     def idle_start_time(self) -> Optional[datetime]:
         return self._idle_start_time
 
+    def set_timeout_minutes(self, minutes: int):
+        """動態更新閒置門檻（分鐘）"""
+        minutes = max(1, min(int(minutes), 240))
+        self.idle_timeout = minutes * 60
+        logger.info(f"Idle timeout updated to {self.idle_timeout}s")
+
     def _detection_loop(self):
         """偵測主迴圈"""
         while self._running:
@@ -97,8 +104,8 @@ class IdleDetector:
                         except Exception as e:
                             logger.error(f"Idle callback error: {e}")
 
-                elif self._is_idle and idle_seconds < self.idle_timeout:
-                    # 從閒置恢復
+                elif self._is_idle and idle_seconds < 3.0:
+                    # 從閒置恢復：需明確有近期輸入，避免門檻調整造成誤觸
                     self._is_idle = False
                     resume_time = datetime.now()
                     logger.info("User active, resuming tracking")

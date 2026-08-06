@@ -5,15 +5,14 @@
 
 const NATIVE_HOST_NAME = 'com.screenget.host';
 
-// 目前活動的分頁資訊
 let currentTab = {
   url: '',
   title: '',
   startTime: Date.now()
 };
 
-// 嘗試連接 Native Messaging Host
 let port = null;
+let connected = false;
 
 function connectNativeHost() {
   try {
@@ -21,44 +20,50 @@ function connectNativeHost() {
 
     port.onMessage.addListener((msg) => {
       console.log('Received from host:', msg);
+      if (msg && msg.status === 'ok') {
+        connected = true;
+      }
     });
 
     port.onDisconnect.addListener(() => {
-      console.log('Native host disconnected:', chrome.runtime.lastError?.message);
+      const err = chrome.runtime.lastError?.message || 'disconnected';
+      console.log('Native host disconnected:', err);
       port = null;
-      // 5 秒後嘗試重新連接
+      connected = false;
       setTimeout(connectNativeHost, 5000);
     });
 
+    connected = true;
     console.log('Connected to native host');
+    // 連線後立刻 ping，讓桌面端知道橋接活著
+    sendToHost({ type: 'ping', url: '', title: '', timestamp: new Date().toISOString() });
   } catch (e) {
     console.error('Failed to connect to native host:', e);
     port = null;
+    connected = false;
+    setTimeout(connectNativeHost, 5000);
   }
 }
 
-// 傳送訊息給 Native Host
 function sendToHost(data) {
-  if (port) {
-    try {
-      port.postMessage(data);
-    } catch (e) {
-      console.error('Error sending message:', e);
-      port = null;
-    }
+  if (!port) {
+    connectNativeHost();
+  }
+  if (!port) return;
+  try {
+    port.postMessage(data);
+  } catch (e) {
+    console.error('Error sending message:', e);
+    port = null;
+    connected = false;
   }
 }
 
-// 更新目前分頁資訊
 function updateCurrentTab(tab) {
   if (!tab || !tab.url) return;
 
-  // 不再忽略 Chrome 內部頁面，讓使用者可以追蹤所有活動
-
-
   const now = Date.now();
 
-  // 如果 URL 改變了，記錄上一個頁面的使用時間
   if (currentTab.url && currentTab.url !== tab.url) {
     const duration = (now - currentTab.startTime) / 1000;
     sendToHost({
@@ -70,14 +75,12 @@ function updateCurrentTab(tab) {
     });
   }
 
-  // 更新當前分頁
   currentTab = {
     url: tab.url,
     title: tab.title || '',
     startTime: now
   };
 
-  // 通知 Native Host 新的頁面
   sendToHost({
     type: 'page_start',
     url: tab.url,
@@ -86,7 +89,6 @@ function updateCurrentTab(tab) {
   });
 }
 
-// 監聽分頁啟動事件
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
@@ -96,17 +98,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   }
 });
 
-// Debouncer 實作
-function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(this, args), wait);
-  };
-}
-
-// 監聽分頁更新事件 (使用 debounce 以節流)
-const debouncedUpdate = debounce((tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.title) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0] && tabs[0].id === tabId) {
@@ -114,11 +106,8 @@ const debouncedUpdate = debounce((tabId, changeInfo, tab) => {
       }
     });
   }
-}, 300);
+});
 
-chrome.tabs.onUpdated.addListener(debouncedUpdate);
-
-// 監聽視窗焦點變更
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) return;
 
@@ -132,7 +121,28 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   }
 });
 
-// 初始化連接
+// popup 可查詢連線狀態
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'get_status') {
+    sendResponse({
+      connected: connected && !!port,
+      url: currentTab.url || '',
+      title: currentTab.title || ''
+    });
+    return true;
+  }
+});
+
+// 週期 ping，維持狀態檔新鮮度
+setInterval(() => {
+  sendToHost({ type: 'ping', url: currentTab.url || '', title: currentTab.title || '', timestamp: new Date().toISOString() });
+}, 60000);
+
 connectNativeHost();
+
+// 啟動時同步目前分頁
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  if (tabs[0]) updateCurrentTab(tabs[0]);
+});
 
 console.log('ScreenGet background script loaded');

@@ -1,2 +1,2 @@
 @echo off
-py -u "C:\Users\USER\DOWNLO~1\VIBE_C~1\SCREEN~2\NATIVE~1\NATIVE~1.PY" %*
+"C:\Users\brian\AppData\Local\Programs\Python\Python312\python.exe" -u "C:\Users\brian\Downloads\vibe_coding\screenget\native_messaging\native_host.py" %*

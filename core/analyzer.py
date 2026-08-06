@@ -3,12 +3,90 @@ analyzer.py - 資料分析模組
 對使用時長資料庫中的資料進行分析，提供日/週/月統計。
 """
 
+import re
 from datetime import datetime, timedelta, date
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
+from urllib.parse import urlparse
 
 from core.database import UsageDatabase
 from core.settings_manager import SettingsManager
+from core.units import format_duration as format_duration_value, credibility_from_ratio
+
+BROWSER_TITLE_SUFFIXES = (
+    ' - Google Chrome',
+    ' - Microsoft Edge',
+    ' - Mozilla Firefox',
+    ' - Brave',
+    ' - Opera',
+    ' - Vivaldi',
+    ' - Arc',
+    ' — Mozilla Firefox',
+)
+
+KNOWN_SITE_KEYWORDS = (
+    ('bilibili', 'bilibili'),
+    ('哔哩哔哩', 'bilibili'),
+    ('youtube', 'YouTube'),
+    ('gmail', 'Gmail'),
+    ('google gemini', 'Google Gemini'),
+    ('gemini', 'Google Gemini'),
+    ('chatgpt', 'ChatGPT'),
+    ('github', 'GitHub'),
+    ('notion', 'Notion'),
+    ('twitter', 'X/Twitter'),
+    ('x.com', 'X/Twitter'),
+    ('facebook', 'Facebook'),
+    ('instagram', 'Instagram'),
+    ('reddit', 'Reddit'),
+    ('linkedin', 'LinkedIn'),
+    ('netflix', 'Netflix'),
+    ('spotify', 'Spotify'),
+)
+
+
+def extract_website_label(window_title: str = "", url: str = "") -> str:
+    """從 URL 或視窗標題推導網站顯示名稱"""
+    if url:
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme in ('chrome', 'edge', 'about', 'chrome-extension', 'brave'):
+                host = parsed.netloc or 'internal'
+                return f"{parsed.scheme}://{host}"
+            if parsed.netloc:
+                return parsed.netloc.removeprefix('www.')
+        except Exception:
+            pass
+
+    title = (window_title or '').strip()
+    if not title:
+        return '未知網站'
+
+    for suffix in BROWSER_TITLE_SUFFIXES:
+        if title.endswith(suffix):
+            title = title[:-len(suffix)].strip()
+            break
+
+    title = re.sub(
+        r'\s*[-–—]\s*(Profile|Profiles|个人资料|個人資料)\s*\d+\s*$',
+        '',
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    lower = title.lower()
+    for keyword, label in KNOWN_SITE_KEYWORDS:
+        if keyword in lower:
+            return label
+
+    # 常見「頁面標題 - 網站名」格式，取最後一段作為網站
+    if ' - ' in title:
+        parts = [p.strip() for p in title.split(' - ') if p.strip()]
+        if len(parts) >= 2 and len(parts[-1]) <= 40:
+            return parts[-1]
+
+    return title[:60] if title else '未知網站'
+
 
 class UsageAnalyzer:
     """使用量分析器"""
@@ -45,27 +123,50 @@ class UsageAnalyzer:
         end = datetime.combine(today + timedelta(days=1), datetime.min.time())
         return start, end
 
+    def _is_whitelisted(self, name: str) -> bool:
+        return bool(self.settings and self.settings.is_whitelisted(name))
+
+    BROWSER_APP_NAMES = frozenset({
+        "Google Chrome", "Microsoft Edge", "Mozilla Firefox",
+        "Brave", "Opera", "Vivaldi", "Arc",
+    })
+
+    def site_label_for_session(self, session: Dict[str, Any]) -> Optional[str]:
+        """從瀏覽器 session 解析網站標籤；非瀏覽器回傳 None。"""
+        if session.get("app_type") != "browser":
+            return None
+        name = session.get("app_name", "") or ""
+        url = session.get("url", "") or ""
+        title = session.get("window_title", "") or ""
+        if url:
+            site = extract_website_label(title, url)
+        elif name and name not in self.BROWSER_APP_NAMES:
+            site = name
+        else:
+            site = extract_website_label(title, "")
+        if self._is_whitelisted(site) or self._is_whitelisted(name):
+            return None
+        return site
+
+    def _iter_website_sessions(self, start: datetime, end: datetime, site: str = None):
+        for s in self.db.get_sessions_in_range(start, end):
+            label = self.site_label_for_session(s)
+            if not label:
+                continue
+            if site is not None and label != site:
+                continue
+            yield s, label
+
     # ─── 總使用時長 ───
 
     def get_total_usage(self, start: datetime, end: datetime,
-                        app_name: str = None, app_type: str = None) -> float:
-        """取得指定時間範圍的總使用秒數"""
-        sessions = self.db.get_sessions_in_range(start, end, app_name, app_type)
-        total = 0.0
-        for s in sessions:
-            if self.settings and self.settings.is_whitelisted(s['app_name']):
-                continue
-            try:
-                s_start = datetime.fromisoformat(s['start_time'])
-                s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
-                if s_end:
-                    actual_start = max(s_start, start)
-                    actual_end = min(s_end, end)
-                    if actual_start < actual_end:
-                        total += (actual_end - actual_start).total_seconds()
-            except (ValueError, TypeError):
-                continue
-        return total
+                        app_name: str = None) -> float:
+        """取得指定時間範圍的總使用秒數（已依區間裁切）"""
+        sessions = self.db.get_sessions_in_range(start, end, app_name)
+        return sum(
+            s.get('duration_seconds', 0) or 0 for s in sessions
+            if not self._is_whitelisted(s['app_name'])
+        )
 
     def get_daily_total(self, app_name: str = None) -> float:
         """當日總使用時長（秒）"""
@@ -84,32 +185,23 @@ class UsageAnalyzer:
 
     # ─── 各程式使用時長排行 ───
 
-    def get_app_rankings(self, start: datetime, end: datetime, 
+    def get_app_rankings(self, start: datetime, end: datetime,
                          app_type: str = None) -> List[Dict[str, Any]]:
         """取得各程式的使用時長排行，可篩選類型 (app / browser / game)"""
-        sessions = self.db.get_sessions_in_range(start, end, app_type=app_type)
+        sessions = self.db.get_sessions_in_range(start, end)
         app_usage: Dict[str, float] = defaultdict(float)
         app_types: Dict[str, str] = {}
 
         for s in sessions:
             name = s['app_name']
-            
-            # 白名單過濾
-            if self.settings and self.settings.is_whitelisted(name):
+
+            if self._is_whitelisted(name):
                 continue
-                
-            try:
-                s_start = datetime.fromisoformat(s['start_time'])
-                s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
-                if not s_end:
-                    continue
-                actual_start = max(s_start, start)
-                actual_end = min(s_end, end)
-                if actual_start < actual_end:
-                    app_usage[name] += (actual_end - actual_start).total_seconds()
-            except (ValueError, TypeError):
+
+            if app_type and s.get('app_type') != app_type:
                 continue
-                
+            duration = s.get('duration_seconds', 0) or 0
+            app_usage[name] += duration
             if name not in app_types:
                 app_types[name] = s.get('app_type', 'app')
 
@@ -135,78 +227,234 @@ class UsageAnalyzer:
         start, end = self.get_month_range()
         return self.get_app_rankings(start, end)
 
-    # ─── 瀏覽器專用排行 ───
+    # ─── 瀏覽器網站排行 ───
+
+    def get_website_rankings(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+        """
+        以網站為單位統計瀏覽器使用時長。
+        優先 URL；其次 bridge 寫入的網域 app_name；最後才用標題推斷。
+        每筆含 credibility: exact / mixed / estimated。
+        """
+        site_usage: Dict[str, float] = defaultdict(float)
+        site_url: Dict[str, float] = defaultdict(float)
+        for s, site in self._iter_website_sessions(start, end):
+            dur = s.get("duration_seconds", 0) or 0
+            site_usage[site] += dur
+            if (s.get("url") or "").strip():
+                site_url[site] += dur
+
+        rankings = []
+        for name, total in sorted(site_usage.items(), key=lambda x: x[1], reverse=True):
+            if total <= 0:
+                continue
+            cred = credibility_from_ratio(site_url[name], total)
+            rankings.append({
+                "app_name": name,
+                "total_seconds": total,
+                "app_type": "browser",
+                "formatted_time": self.format_duration(total),
+                "credibility": cred,
+                "url_ratio": (site_url[name] / total) if total else 0.0,
+            })
+        return rankings
+
+    def get_browser_credibility_summary(self, start: datetime, end: datetime) -> Dict[str, Any]:
+        """瀏覽器整體可信度摘要（依時長加權）。"""
+        url_secs = 0.0
+        total = 0.0
+        for s, _ in self._iter_website_sessions(start, end):
+            dur = s.get("duration_seconds", 0) or 0
+            total += dur
+            if (s.get("url") or "").strip():
+                url_secs += dur
+        cred = credibility_from_ratio(url_secs, total)
+        ratio = (url_secs / total) if total else 0.0
+        return {
+            "credibility": cred,
+            "url_ratio": ratio,
+            "url_percent": int(round(ratio * 100)),
+            "total_seconds": total,
+        }
 
     def get_browser_rankings(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
-        return self.get_app_rankings(start, end, app_type='browser')
+        """瀏覽器分析頁使用網站排行（非瀏覽器進程名稱）"""
+        return self.get_website_rankings(start, end)
 
     def get_daily_browser_rankings(self) -> List[Dict[str, Any]]:
         start, end = self.get_today_range()
         return self.get_browser_rankings(start, end)
 
-    def get_browser_site_rankings(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
-        """
-        取得瀏覽器中各網站的使用時長排行。
-        優先使用 url 中的域名分組；若無 url 則從 window_title 提取網站名稱。
-        例如 "YouTube - Google Chrome" → "YouTube"
-        """
-        sessions = self.db.get_browser_sessions_in_range(start, end)
-        site_usage: Dict[str, float] = defaultdict(float)
+    def get_all_websites_in_range(self, start: datetime, end: datetime) -> List[str]:
+        sites = set()
+        for _, site in self._iter_website_sessions(start, end):
+            sites.add(site)
+        return sorted(sites)
 
-        # 瀏覽器名稱後綴列表，用於從視窗標題中移除
-        browser_suffixes = [
-            ' - Google Chrome', ' - Microsoft Edge', ' - Mozilla Firefox',
-            ' - Opera', ' - Brave', ' - Vivaldi', ' - Arc',
-            ' — Mozilla Firefox',  # Firefox 有時使用 em dash
-        ]
+    def get_website_total(self, start: datetime, end: datetime, site: str) -> float:
+        return sum(
+            s.get("duration_seconds", 0) or 0
+            for s, _ in self._iter_website_sessions(start, end, site)
+        )
 
-        for s in sessions:
-            name = s['app_name']
+    def get_website_daily_total(self, site: str) -> float:
+        start, end = self.get_today_range()
+        return self.get_website_total(start, end, site)
 
-            # 白名單過濾
-            if self.settings and self.settings.is_whitelisted(name):
+    def get_website_weekly_total(self, site: str) -> float:
+        start, end = self.get_week_range()
+        return self.get_website_total(start, end, site)
+
+    def get_website_monthly_total(self, site: str) -> float:
+        start, end = self.get_month_range()
+        return self.get_website_total(start, end, site)
+
+    def get_website_time_blocks(self, start: datetime, end: datetime,
+                                site: str) -> List[Dict[str, Any]]:
+        blocks = []
+        for s, label in self._iter_website_sessions(start, end, site):
+            clipped_start = s.get("clipped_start")
+            clipped_end = s.get("clipped_end")
+            if not clipped_start or not clipped_end:
                 continue
+            blocks.append({
+                "app_name": label,
+                "app_type": "browser",
+                "start": clipped_start,
+                "end": clipped_end,
+                "duration_seconds": s.get("duration_seconds", 0),
+                "window_title": s.get("window_title", ""),
+                "url": s.get("url", ""),
+            })
+        return blocks
 
-            duration = s.get('duration_seconds', 0) or 0
-            url = s.get('url', '') or ''
-            window_title = s.get('window_title', '') or ''
+    def get_website_hourly(self, start: datetime, end: datetime,
+                           site: str) -> Dict[int, float]:
+        hourly: Dict[int, float] = defaultdict(float)
+        for s, _ in self._iter_website_sessions(start, end, site):
+            s_start = s.get("clipped_start")
+            s_end = s.get("clipped_end")
+            if not s_start or not s_end:
+                continue
+            current = s_start
+            while current < s_end:
+                hour = current.hour
+                next_hour = current.replace(
+                    minute=0, second=0, microsecond=0
+                ) + timedelta(hours=1)
+                if next_hour > s_end:
+                    hourly[hour] += (s_end - current).total_seconds()
+                else:
+                    hourly[hour] += (next_hour - current).total_seconds()
+                current = next_hour
+        return dict(hourly)
 
-            # 決定網站名稱
-            site_name = None
+    def get_website_trend(self, start: datetime, end: datetime,
+                          site: str) -> List[Dict[str, Any]]:
+        return self.get_trend_for_range(start, end, website=site)
 
-            # 優先使用 URL 的域名
+    def get_website_credibility(self, start: datetime, end: datetime, site: str) -> Dict[str, Any]:
+        url_secs = 0.0
+        total = 0.0
+        for s, _ in self._iter_website_sessions(start, end, site):
+            dur = s.get("duration_seconds", 0) or 0
+            total += dur
+            if (s.get("url") or "").strip():
+                url_secs += dur
+        cred = credibility_from_ratio(url_secs, total)
+        ratio = (url_secs / total) if total else 0.0
+        return {
+            "credibility": cred,
+            "url_ratio": ratio,
+            "url_percent": int(round(ratio * 100)),
+            "total_seconds": total,
+        }
+
+    def get_website_pages(self, start: datetime, end: datetime,
+                          site: str, max_items: int = 8) -> Tuple[List[Dict[str, Any]], str]:
+        """單一網站內的頁面／標題排行（第三層細節）；回傳 (rankings, precision)。"""
+        page_usage: Dict[str, float] = defaultdict(float)
+        url_secs = 0.0
+        total = 0.0
+        for s, _ in self._iter_website_sessions(start, end, site):
+            dur = s.get("duration_seconds", 0) or 0
+            total += dur
+            url = (s.get("url") or "").strip()
+            title = (s.get("window_title") or "").strip()
             if url:
+                url_secs += dur
                 try:
-                    from urllib.parse import urlparse
                     parsed = urlparse(url)
-                    if parsed.netloc:
-                        site_name = parsed.netloc
+                    path = parsed.path or "/"
+                    if len(path) > 48:
+                        path = path[:45] + "…"
+                    label = f"{parsed.netloc.removeprefix('www.')}{path}"
                 except Exception:
-                    pass
-
-            # 若無 URL，從視窗標題提取
-            if not site_name and window_title:
-                title = window_title.strip()
-                for suffix in browser_suffixes:
+                    label = url[:60]
+            elif title:
+                for suffix in BROWSER_TITLE_SUFFIXES:
                     if title.endswith(suffix):
                         title = title[:-len(suffix)].strip()
                         break
-                if title:
-                    site_name = title
-
-            # 若仍無法識別，使用瀏覽器名稱
-            if not site_name:
-                site_name = name
-
-            site_usage[site_name] += duration
+                label = title[:60] if title else site
+            else:
+                label = site
+            page_usage[label] += dur
 
         rankings = []
-        for site_name, total in sorted(site_usage.items(), key=lambda x: x[1], reverse=True):
+        for name, page_total in sorted(page_usage.items(), key=lambda x: x[1], reverse=True):
+            if page_total <= 0:
+                continue
             rankings.append({
-                'app_name': site_name,
-                'total_seconds': total,
-                'app_type': 'browser',
-                'formatted_time': self.format_duration(total),
+                "app_name": name,
+                "total_seconds": page_total,
+                "app_type": "browser",
+                "formatted_time": self.format_duration(page_total),
+            })
+            if len(rankings) >= max_items:
+                break
+
+        precision = credibility_from_ratio(url_secs, total)
+        return rankings, precision
+
+    # ─── 分類統計 ───
+
+    def get_category_for(self, name: str, app_type: str = None) -> str:
+        if self.settings:
+            return self.settings.get_category(name, app_type)
+        if app_type == "browser":
+            return "瀏覽"
+        if app_type == "game":
+            return "遊戲"
+        return "其他"
+
+    def get_category_rankings(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+        """依分類彙總使用時長"""
+        sessions = self.db.get_sessions_in_range(start, end)
+        cat_usage: Dict[str, float] = defaultdict(float)
+
+        for s in sessions:
+            name = s["app_name"]
+            if self._is_whitelisted(name):
+                continue
+            # 瀏覽器 session：以網站標籤做分類鍵更合理
+            if s.get("app_type") == "browser":
+                label = self.site_label_for_session(s)
+                if not label:
+                    continue
+                category = self.get_category_for(label, "browser")
+            else:
+                category = self.get_category_for(name, s.get("app_type"))
+            cat_usage[category] += s.get("duration_seconds", 0) or 0
+
+        rankings = []
+        for name, total in sorted(cat_usage.items(), key=lambda x: x[1], reverse=True):
+            if total <= 0:
+                continue
+            rankings.append({
+                "app_name": name,
+                "total_seconds": total,
+                "app_type": "category",
+                "formatted_time": self.format_duration(total),
             })
         return rankings
 
@@ -215,39 +463,27 @@ class UsageAnalyzer:
     def get_time_blocks(self, start: datetime, end: datetime,
                         app_name: str = None) -> List[Dict[str, Any]]:
         """
-        取得使用時間段（每個 session 的起止時間）。
+        取得使用時間段（已裁切至查詢區間）。
         回傳格式：[{'app_name': ..., 'start': datetime, 'end': datetime, ...}, ...]
-        用於繪製 Gantt-style 時間段長條圖。
         """
         sessions = self.db.get_sessions_in_range(start, end, app_name)
         blocks = []
         for s in sessions:
-            try:
-                s_start = datetime.fromisoformat(s['start_time'])
-                s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
-                if s_end:
-                    # 邊界截斷，確保 session 不會超出查詢範圍 (start, end)
-                    s_start = max(s_start, start)
-                    s_end = min(s_end, end)
-                    if s_start >= s_end:
-                        continue
-                        
-                    app_name = s['app_name']
-                    # 白名單過濾
-                    if self.settings and self.settings.is_whitelisted(app_name):
-                        continue
-                        
-                    blocks.append({
-                        'app_name': app_name,
-                        'app_type': s.get('app_type', 'app'),
-                        'start': s_start,
-                        'end': s_end,
-                        'duration_seconds': (s_end - s_start).total_seconds(),
-                        'window_title': s.get('window_title', ''),
-                        'url': s.get('url', ''),
-                    })
-            except (ValueError, TypeError):
+            if self._is_whitelisted(s['app_name']):
                 continue
+            clipped_start = s.get('clipped_start')
+            clipped_end = s.get('clipped_end')
+            if not clipped_start or not clipped_end:
+                continue
+            blocks.append({
+                'app_name': s['app_name'],
+                'app_type': s.get('app_type', 'app'),
+                'start': clipped_start,
+                'end': clipped_end,
+                'duration_seconds': s.get('duration_seconds', 0),
+                'window_title': s.get('window_title', ''),
+                'url': s.get('url', ''),
+            })
         return blocks
 
     def get_hourly_usage(self, start: datetime, end: datetime,
@@ -260,41 +496,27 @@ class UsageAnalyzer:
         hourly: Dict[int, float] = defaultdict(float)
 
         for s in sessions:
-            try:
-                s_start = datetime.fromisoformat(s['start_time'])
-                s_end = datetime.fromisoformat(s['end_time']) if s['end_time'] else None
-                if not s_end:
-                    continue
-                
-                # 邊界截斷
-                s_start = max(s_start, start)
-                s_end = min(s_end, end)
-                if s_start >= s_end:
-                    continue
-
-                # 白名單過濾
-                if self.settings and self.settings.is_whitelisted(s['app_name']):
-                    continue
-
-                # 將 session 分配到各小時
-                current = s_start
-                while current < s_end:
-                    hour = current.hour
-                    next_hour = current.replace(
-                        minute=0, second=0, microsecond=0
-                    ) + timedelta(hours=1)
-
-                    if next_hour > s_end:
-                        hourly[hour] += (s_end - current).total_seconds()
-                    else:
-                        hourly[hour] += (next_hour - current).total_seconds()
-                    current = next_hour
-
-            except (ValueError, TypeError):
+            if self._is_whitelisted(s['app_name']):
+                continue
+            s_start = s.get('clipped_start')
+            s_end = s.get('clipped_end')
+            if not s_start or not s_end:
                 continue
 
-        return dict(hourly)
+            current = s_start
+            while current < s_end:
+                hour = current.hour
+                next_hour = current.replace(
+                    minute=0, second=0, microsecond=0
+                ) + timedelta(hours=1)
 
+                if next_hour > s_end:
+                    hourly[hour] += (s_end - current).total_seconds()
+                else:
+                    hourly[hour] += (next_hour - current).total_seconds()
+                current = next_hour
+
+        return dict(hourly)
 
     # ─── 每日趨勢（過去 N 天的使用量） ───
 
@@ -303,49 +525,81 @@ class UsageAnalyzer:
                         app_type: str = None) -> List[Dict[str, Any]]:
         """取得過去 N 天每天的總使用時長，可依名稱或類型篩選"""
         today = date.today()
-        trend = []
-        for i in range(days - 1, -1, -1):
-            day = today - timedelta(days=i)
-            start = datetime.combine(day, datetime.min.time())
-            end = datetime.combine(day + timedelta(days=1), datetime.min.time())
-            
-            # 這裡需要一個過濾 app_type 的 get_total_usage
-            if app_type:
-                total = self.get_total_usage(start, end, app_type=app_type)
+        start = datetime.combine(today - timedelta(days=days - 1), datetime.min.time())
+        end = datetime.combine(today + timedelta(days=1), datetime.min.time())
+        return self.get_trend_for_range(start, end, app_name=app_name, app_type=app_type)
+
+    def get_trend_for_range(self, start: datetime, end: datetime,
+                            app_name: str = None,
+                            app_type: str = None,
+                            website: str = None) -> List[Dict[str, Any]]:
+        """取得指定區間內每日趨勢（單次查詢後在記憶體分桶）。"""
+        day = start.date()
+        end_day = (end - timedelta(seconds=1)).date()
+        buckets: Dict[date, float] = {}
+        while day <= end_day:
+            buckets[day] = 0.0
+            day += timedelta(days=1)
+
+        sessions = self.db.get_sessions_in_range(start, end)
+        for s in sessions:
+            if website:
+                label = self.site_label_for_session(s)
+                if label != website:
+                    continue
+            elif app_type == "browser":
+                if s.get("app_type") != "browser":
+                    continue
+                if not self.site_label_for_session(s):
+                    continue
+            elif app_type:
+                if s.get("app_type") != app_type:
+                    continue
+                if self._is_whitelisted(s.get("app_name", "")):
+                    continue
+            elif app_name:
+                if s.get("app_name") != app_name:
+                    continue
+                if self._is_whitelisted(app_name):
+                    continue
             else:
-                if app_name: # Specific app
-                    total = self.get_total_usage(start, end, app_name)
-                else: # Global total, apply whitelist
-                    sessions = self.db.get_sessions_in_range(start, end)
-                    total = sum(s.get('duration_seconds', 0) or 0 
-                                for s in sessions 
-                                if not (self.settings and self.settings.is_whitelisted(s['app_name'])))
-                
+                if self._is_whitelisted(s.get("app_name", "")):
+                    continue
+
+            s_start = s.get("clipped_start")
+            s_end = s.get("clipped_end")
+            if not s_start or not s_end:
+                continue
+
+            current = s_start
+            while current < s_end:
+                d = current.date()
+                next_midnight = datetime.combine(d + timedelta(days=1), datetime.min.time())
+                slice_end = min(next_midnight, s_end)
+                if d in buckets:
+                    buckets[d] += (slice_end - current).total_seconds()
+                current = slice_end
+
+        trend = []
+        day = start.date()
+        while day <= end_day:
+            total = buckets.get(day, 0.0)
             trend.append({
-                'date': day,
-                'date_str': day.strftime('%m/%d'),
-                'total_seconds': total,
-                'formatted_time': self.format_duration(total),
+                "date": day,
+                "date_str": day.strftime("%m/%d"),
+                "total_seconds": total,
+                "formatted_time": self.format_duration(total),
             })
+            day += timedelta(days=1)
         return trend
 
     # ─── 工具方法 ───
 
-    @staticmethod
-    def format_duration(seconds: float) -> str:
-        """格式化時間長度為可讀字串"""
-        if seconds < 0:
-            seconds = 0
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-
-        if hours > 0:
-            return f"{hours}h {minutes}m"
-        elif minutes > 0:
-            return f"{minutes}m {secs}s"
-        else:
-            return f"{secs}s"
+    def format_duration(self, seconds: float, unit: str = None) -> str:
+        """格式化時間長度；單位來自參數或設定（auto / hours / minutes）。"""
+        if unit is None:
+            unit = self.settings.get_duration_unit() if self.settings else "auto"
+        return format_duration_value(seconds, unit)
 
     def get_all_apps_today(self) -> List[str]:
         """取得今天所有使用過的程式"""
@@ -355,84 +609,3 @@ class UsageAnalyzer:
     def get_all_apps_in_range(self, start: datetime, end: datetime) -> List[str]:
         """取得指定範圍內所有使用過的程式"""
         return self.db.get_unique_apps(start, end)
-
-    def get_active_dates(self) -> List[date]:
-        """取得所有有數據的日期"""
-        return self.db.get_all_active_dates()
-
-    def get_weekly_daily_totals(self) -> List[Dict[str, Any]]:
-        """取得本週週一至週日每天的各 App 使用時長 (用於 Weekly 排行圖)"""
-        today = date.today()
-        # 取得本週週一
-        monday = today - timedelta(days=today.weekday())
-        
-        results = []
-        days_names = ['週一', '週二', '週三', '週四', '週五', '週六', '週日']
-        
-        for i in range(7):
-            day = monday + timedelta(days=i)
-            start = datetime.combine(day, datetime.min.time())
-            end = start + timedelta(days=1)
-            
-            # 取得該日所有 session
-            sessions = self.db.get_sessions_in_range(start, end)
-            app_usage = defaultdict(float)
-            for s in sessions:
-                name = s['app_name']
-                if self.settings and self.settings.is_whitelisted(name):
-                    continue
-                app_usage[name] += s.get('duration_seconds', 0) or 0
-            
-            results.append({
-                'label': days_names[i],
-                'date': day,
-                'app_usage': dict(app_usage),
-                'total': sum(app_usage.values())
-            })
-        return results
-
-    def get_monthly_weekly_totals(self) -> List[Dict[str, Any]]:
-        """取得本月每 7 天為一週的各 App 使用時長 (用於 Monthly 排行圖)"""
-        today = date.today()
-        first_day = today.replace(day=1)
-        
-        results = []
-        # 第一週: 1-7, 第二週: 8-14, ...
-        for w in range(5): # 最多 5-6 週
-            start_date = first_day + timedelta(days=w*7)
-            if start_date.month != first_day.month:
-                break
-                
-            end_date = start_date + timedelta(days=7)
-            # 如果 end_date 跨月了，限制在月尾
-            if end_date.month != first_day.month:
-                # 取得下個月第一天
-                if first_day.month == 12:
-                    next_month = first_day.replace(year=first_day.year+1, month=1, day=1)
-                else:
-                    next_month = first_day.replace(month=first_day.month+1, day=1)
-                end_datetime = datetime.combine(next_month, datetime.min.time())
-            else:
-                end_datetime = datetime.combine(end_date, datetime.min.time())
-                
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            
-            sessions = self.db.get_sessions_in_range(start_datetime, end_datetime)
-            app_usage = defaultdict(float)
-            for s in sessions:
-                name = s['app_name']
-                if self.settings and self.settings.is_whitelisted(name):
-                    continue
-                app_usage[name] += s.get('duration_seconds', 0) or 0
-                
-            results.append({
-                'label': f'第{w+1}週',
-                'start_date': start_date,
-                'app_usage': dict(app_usage),
-                'total': sum(app_usage.values())
-            })
-            
-            if end_datetime.date() >= (first_day + timedelta(days=32)).replace(day=1):
-                break
-                
-        return results

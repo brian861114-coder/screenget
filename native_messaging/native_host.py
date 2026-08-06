@@ -1,6 +1,7 @@
 """
 native_host.py - Native Messaging Host
-接收來自 Chrome 擴充套件的訊息，將網頁使用資料寫入 SQLite 資料庫。
+接收 Chrome 擴充套件訊息，寫入 bridge 狀態檔供主程式套用。
+（不再直接寫入使用時長 DB，避免與前景追蹤雙重計時）
 """
 
 import sys
@@ -12,20 +13,19 @@ import os
 # 將專案根目錄加入 path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.database import UsageDatabase
+from core.browser_bridge import write_bridge_event, get_app_data_dir
 
-logger = logging.getLogger(__name__)
-
-log_dir = os.path.join(os.getenv('APPDATA', ''), 'ScreenGet')
-os.makedirs(log_dir, exist_ok=True)
+log_dir = get_app_data_dir()
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join(log_dir, 'native_host.log'),
-                          encoding='utf-8')
-    ]
+        logging.FileHandler(
+            os.path.join(log_dir, "native_host.log"), encoding="utf-8"
+        )
+    ],
 )
+logger = logging.getLogger(__name__)
 
 
 def read_message():
@@ -33,28 +33,23 @@ def read_message():
     raw_length = sys.stdin.buffer.read(4)
     if not raw_length:
         return None
-    message_length = struct.unpack('=I', raw_length)[0]
-    message = sys.stdin.buffer.read(message_length).decode('utf-8')
+    message_length = struct.unpack("=I", raw_length)[0]
+    message = sys.stdin.buffer.read(message_length).decode("utf-8")
     return json.loads(message)
 
 
 def send_message(data):
     """透過 stdout 送出訊息給 Chrome"""
-    encoded = json.dumps(data).encode('utf-8')
-    sys.stdout.buffer.write(struct.pack('=I', len(encoded)))
+    encoded = json.dumps(data).encode("utf-8")
+    sys.stdout.buffer.write(struct.pack("=I", len(encoded)))
     sys.stdout.buffer.write(encoded)
     sys.stdout.buffer.flush()
 
 
 def main():
-    """Native Messaging Host 主循環"""
-    db = UsageDatabase()
-    current_session_id = None
-
     logger.info("Native messaging host started")
     logger.info(f"Python executable: {sys.executable}")
-    logger.info(f"Current directory: {os.getcwd()}")
-    logger.info(f"Database path: {db.db_path}")
+    logger.info(f"Bridge state dir: {log_dir}")
 
     while True:
         try:
@@ -63,64 +58,27 @@ def main():
                 logger.info("Received empty message (EOF), stopping")
                 break
 
-            msg_type = message.get('type', '')
-            url = message.get('url', '')
-            title = message.get('title', '')
+            msg_type = message.get("type", "")
+            url = message.get("url", "")
+            title = message.get("title", "")
+            logger.info(f"Received: type={msg_type} url={url[:80]!r}")
 
-            logger.info(f"Received message: {json.dumps(message)}")
-
-            if msg_type == 'page_start':
-                # 結束前一個 session
-                if current_session_id is not None:
-                    logger.info(f"Ending session {current_session_id} for new page")
-                    db.end_session(current_session_id)
-
-                # 開始新的 session
-                # 從 URL 提取域名作為 app_name
-                from urllib.parse import urlparse
-                parsed = urlparse(url)
-                if parsed.scheme in ('chrome', 'about', 'edge', 'chrome-extension'):
-                    domain = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else f"{parsed.scheme}://internal"
-                else:
-                    domain = parsed.netloc or url[:50]
-
-                current_session_id = db.start_session(
-                    app_name=domain,
-                    window_title=title,
-                    exe_path='',
-                    app_type='browser',
-                    url=url
-                )
-                logger.info(f"Started session {current_session_id} for {domain}")
-
-                send_message({'status': 'ok', 'session_id': current_session_id})
-
-            elif msg_type == 'page_end':
-                if current_session_id is not None:
-                    logger.info(f"Ending session {current_session_id} (page_end)")
-                    db.end_session(current_session_id)
-                    current_session_id = None
-                send_message({'status': 'ok'})
-
+            if msg_type in ("page_start", "page_end", "ping"):
+                write_bridge_event(msg_type, url=url, title=title)
+                send_message({"status": "ok", "type": msg_type})
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
-                send_message({'status': 'unknown_type'})
+                send_message({"status": "unknown_type"})
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             try:
-                send_message({'status': 'error', 'message': str(e)})
+                send_message({"status": "error", "message": str(e)})
             except Exception:
                 pass
 
-    # 清理
-    if current_session_id is not None:
-        logger.info(f"Cleaning up: ending session {current_session_id}")
-        db.end_session(current_session_id)
-    
-    db.close()
     logger.info("Native messaging host stopped")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
